@@ -32,7 +32,6 @@
             z-index: 1;
         }
 
-        /* Hidden video element for MediaPipe */
         #input-video {
             position: absolute;
             top: 0;
@@ -221,8 +220,8 @@
             </div>
             
             <div class="controls-hint">
-                Open Hands: Relaxed field<br>
-                Closed Fists: High tension / compression
+                Open hand: Field scattered<br>
+                Closed fist: Heart forms &amp; PPG from back of hand
             </div>
         </div>
     </div>
@@ -232,14 +231,14 @@
         <div class="glass-panel hr-panel">
             <div class="hr-label">Heart Rate</div>
             <div id="hr-value">--</div>
-            <div class="hr-sub">PPG derived</div>
+            <div class="hr-sub">PPG (back of hand)</div>
         </div>
     </div>
 
     <!-- Main 3D Container -->
     <div id="canvas-container"></div>
 
-    <!-- Webcam feed for processing (hidden) and preview (visible small) -->
+    <!-- Webcam feed -->
     <video id="input-video" playsinline></video>
     
     <div class="webcam-preview">
@@ -250,27 +249,33 @@
     // --- Configuration ---
     const PARTICLE_COUNT = 12000;
     const CAM_FOV = 60;
-    
+    const FIST_TENSION_THRESHOLD = 0.8; // when we consider the fist "clenched"
+
     // --- Global State ---
     let handTension = 0; // 0 = open, 1 = closed
     let targetTension = 0;
     let handPresence = false;
     let time = 0;
 
-    // PPG / heart rate state
-    let ppgSamples = []; // { t, v }
+    // Heart-rate / PPG state
+    let ppgSamples = [];         // { t, v }
     let hrBPM = 0;
     let lastHRComputeTime = 0;
-    const PPG_WINDOW_SEC = 10;   // sliding window
-    const PPG_MIN_SEC = 5;       // minimum data window for HR
+    const PPG_WINDOW_SEC = 10;
+    const PPG_MIN_SEC = 5;
+    let hrActive = false;        // only true when fist is clenched
 
     // --- 3D Scene Setup ---
     const container = document.getElementById('canvas-container');
     const scene = new THREE.Scene();
-    // Subtle fog for depth
     scene.fog = new THREE.FogExp2(0x050505, 0.02);
 
-    const camera = new THREE.PerspectiveCamera(CAM_FOV, window.innerWidth / window.innerHeight, 0.1, 100);
+    const camera = new THREE.PerspectiveCamera(
+        CAM_FOV,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        100
+    );
     camera.position.z = 9;
     camera.position.y = 0.8;
 
@@ -279,9 +284,8 @@
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(renderer.domElement);
 
-    // --- Particle System Generation ---
+    // --- Particle System (Heart) ---
 
-    // Helper: Soft circle texture for particles
     function createParticleTexture() {
         const canvas = document.createElement('canvas');
         canvas.width = 32;
@@ -298,9 +302,7 @@
         return texture;
     }
 
-    // Heart shape sampling (implicit 3D heart)
-    // Based on classic heart equation:
-    // (x^2 + (9/4)y^2 + z^2 - 1)^3 - x^2 z^3 - (9/80) y^2 z^3 <= 0
+    // 3D heart: implicit equation
     function randomPointInHeart() {
         while (true) {
             const x = (Math.random() * 2 - 1) * 1.3;
@@ -309,7 +311,6 @@
             const a = x*x + (9/4)*y*y + z*z - 1;
             const f = a*a*a - x*x*z*z*z - (9/80)*y*y*z*z*z;
             if (f <= 0) {
-                // Slight scale to look good in camera framing
                 return { x: x * 1.4, y: y * 1.4, z: z * 1.2 };
             }
         }
@@ -320,34 +321,28 @@
     const targetPositions = new Float32Array(PARTICLE_COUNT * 3);
     const colors = new Float32Array(PARTICLE_COUNT * 3);
     const sizes = new Float32Array(PARTICLE_COUNT);
-    const randomness = new Float32Array(PARTICLE_COUNT * 3); // For idle animation noise
+    const randomness = new Float32Array(PARTICLE_COUNT * 3);
 
-    const colorCells = new THREE.Color(0x00d2ff); // Cyan (low tension)
-    const colorOrgans = new THREE.Color(0xff0055); // Magenta/red (high tension)
+    const colorCells = new THREE.Color(0x00d2ff);
+    const colorOrgans = new THREE.Color(0xff0055);
 
-    // Fill geometry with heart-distributed target positions
     for (let i = 0; i < PARTICLE_COUNT; i++) {
         const p = randomPointInHeart();
 
-        // Target: heart shape
         targetPositions[i * 3]     = p.x;
         targetPositions[i * 3 + 1] = p.y;
         targetPositions[i * 3 + 2] = p.z;
 
-        // Start scattered
         positions[i * 3]     = (Math.random() - 0.5) * 20;
         positions[i * 3 + 1] = (Math.random() - 0.5) * 20;
         positions[i * 3 + 2] = (Math.random() - 0.5) * 15;
 
-        // Start color (cells)
         colors[i * 3]     = colorCells.r;
         colors[i * 3 + 1] = colorCells.g;
         colors[i * 3 + 2] = colorCells.b;
 
-        // Size variation
         sizes[i] = 0.5 + Math.random() * 0.5;
 
-        // Noise vector
         randomness[i*3]   = (Math.random() - 0.5);
         randomness[i*3+1] = (Math.random() - 0.5);
         randomness[i*3+2] = (Math.random() - 0.5);
@@ -368,14 +363,14 @@
     });
 
     const particles = new THREE.Points(geometry, material);
-    particles.rotation.x = -0.2; // slight tilt
+    particles.rotation.x = -0.2;
     scene.add(particles);
 
-    // --- MediaPipe Hands + Webcam Setup ---
+    // --- MediaPipe + Webcam ---
     const videoElement = document.getElementById('input-video');
     const previewCanvas = document.getElementById('preview-canvas');
     const previewCtx = previewCanvas.getContext('2d');
-    
+
     previewCanvas.width = 320;
     previewCanvas.height = 240;
 
@@ -387,78 +382,41 @@
         const duration = tLast - tFirst;
         if (duration < PPG_MIN_SEC) return;
 
-        // Build value array & detrend
         const values = ppgSamples.map(s => s.v);
         const mean = values.reduce((a, b) => a + b, 0) / values.length;
         const detrended = values.map(v => v - mean);
 
-        // Estimate standard deviation for threshold
         const variance = detrended.reduce((a,v)=>a+v*v,0)/detrended.length;
         const std = Math.sqrt(variance);
-        const threshold = std * 0.5; // heuristic
+        const threshold = std * 0.5;
 
-        // Simple peak detection
         let peaks = 0;
         for (let i = 1; i < detrended.length - 1; i++) {
-            if (detrended[i] > detrended[i-1] &&
-                detrended[i] > detrended[i+1] &&
-                detrended[i] > threshold) {
+            if (
+                detrended[i] > detrended[i - 1] &&
+                detrended[i] > detrended[i + 1] &&
+                detrended[i] > threshold
+            ) {
                 peaks++;
             }
         }
-
         if (peaks < 1) return;
 
         const bpm = (peaks / duration) * 60;
-        // Plausible human HR range
         if (bpm >= 40 && bpm <= 180) {
             hrBPM = Math.round(bpm);
-            const hrEl = document.getElementById('hr-value');
-            hrEl.textContent = hrBPM + " bpm";
+            document.getElementById('hr-value').textContent = hrBPM + " bpm";
         }
     }
 
     function onResults(results) {
-        // Draw preview
         previewCtx.save();
         previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
         previewCtx.drawImage(results.image, 0, 0, previewCanvas.width, previewCanvas.height);
-        
+
         const nowSec = performance.now() / 1000;
+        handPresence = false;
 
-        // --- PPG sampling (simple ROI in the center) ---
-        const roiSize = 30;
-        const cx = Math.floor(previewCanvas.width / 2);
-        const cy = Math.floor(previewCanvas.height / 2);
-        const x0 = Math.max(0, cx - roiSize / 2);
-        const y0 = Math.max(0, cy - roiSize / 2);
-        const w = Math.min(roiSize, previewCanvas.width - x0);
-        const h = Math.min(roiSize, previewCanvas.height - y0);
-
-        const imgData = previewCtx.getImageData(x0, y0, w, h);
-        const data = imgData.data;
-        let sumG = 0;
-        let count = 0;
-        for (let i = 0; i < data.length; i += 4) {
-            const g = data[i + 1]; // green channel
-            sumG += g;
-            count++;
-        }
-        if (count > 0) {
-            const avgG = sumG / count;
-            ppgSamples.push({ t: nowSec, v: avgG });
-            // Keep only last PPG_WINDOW_SEC seconds
-            while (ppgSamples.length > 0 && (nowSec - ppgSamples[0].t) > PPG_WINDOW_SEC) {
-                ppgSamples.shift();
-            }
-            // Compute HR at most once per second
-            if (nowSec - lastHRComputeTime > 1.0) {
-                computeHeartRateFromPPG(nowSec);
-                lastHRComputeTime = nowSec;
-            }
-        }
-
-        // --- Hand tracking & tension ---
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
             handPresence = true;
             document.getElementById('status-text').innerText = "Hands Detected";
@@ -471,7 +429,6 @@
                 drawConnectors(previewCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 1});
                 drawLandmarks(previewCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 2});
 
-                // Tension: distance wrist -> fingertips
                 const wrist = landmarks[0];
                 const tips = [8, 12, 16, 20];
                 let avgTipDist = 0;
@@ -479,8 +436,8 @@
                 tips.forEach(idx => {
                     const tip = landmarks[idx];
                     const dist = Math.sqrt(
-                        Math.pow(tip.x - wrist.x, 2) + 
-                        Math.pow(tip.y - wrist.y, 2) + 
+                        Math.pow(tip.x - wrist.x, 2) +
+                        Math.pow(tip.y - wrist.y, 2) +
                         Math.pow(tip.z - wrist.z, 2)
                     );
                     avgTipDist += dist;
@@ -489,22 +446,82 @@
 
                 const openVal = 0.35;
                 const closedVal = 0.15;
-                
                 let t = (openVal - avgTipDist) / (openVal - closedVal);
-                t = Math.max(0, Math.min(1, t)); // Clamp
-                
+                t = Math.max(0, Math.min(1, t));
+
                 totalTension += t;
                 handCount++;
             }
-            
+
             targetTension = totalTension / handCount;
 
+            // Fist clenched?
+            hrActive = targetTension >= FIST_TENSION_THRESHOLD;
+
+            if (!hrActive) {
+                // Reset HR if fist opens again
+                ppgSamples = [];
+                hrBPM = 0;
+                document.getElementById('hr-value').textContent = "--";
+            }
+
+            // If fist clenched, run PPG from back of first hand
+            if (hrActive) {
+                const firstHand = results.multiHandLandmarks[0];
+                // MCP joints: 5, 9, 13, 17 -> approximate knuckle region
+                const mcpIndices = [5, 9, 13, 17];
+                let sx = 0, sy = 0;
+                mcpIndices.forEach(idx => {
+                    sx += firstHand[idx].x;
+                    sy += firstHand[idx].y;
+                });
+                sx /= mcpIndices.length;
+                sy /= mcpIndices.length;
+
+                const cx = sx * previewCanvas.width;
+                const cy = sy * previewCanvas.height;
+
+                const roiSize = 40;
+                let x0 = Math.floor(cx - roiSize / 2);
+                let y0 = Math.floor(cy - roiSize / 2);
+                x0 = Math.max(0, Math.min(previewCanvas.width - roiSize, x0));
+                y0 = Math.max(0, Math.min(previewCanvas.height - roiSize, y0));
+
+                const imgData = previewCtx.getImageData(x0, y0, roiSize, roiSize);
+                const data = imgData.data;
+
+                let sumG = 0, count = 0;
+                for (let i = 0; i < data.length; i += 4) {
+                    sumG += data[i + 1]; // green channel
+                    count++;
+                }
+                if (count > 0) {
+                    const avgG = sumG / count;
+                    ppgSamples.push({ t: nowSec, v: avgG });
+                    while (ppgSamples.length > 0 && (nowSec - ppgSamples[0].t) > PPG_WINDOW_SEC) {
+                        ppgSamples.shift();
+                    }
+                    if (nowSec - lastHRComputeTime > 1.0) {
+                        computeHeartRateFromPPG(nowSec);
+                        lastHRComputeTime = nowSec;
+                    }
+                }
+
+                // Visualize ROI box
+                previewCtx.strokeStyle = '#00FFFF';
+                previewCtx.lineWidth = 2;
+                previewCtx.strokeRect(x0, y0, roiSize, roiSize);
+            }
         } else {
-            handPresence = false;
             document.getElementById('status-text').innerText = "Searching for hands...";
             document.getElementById('cam-dot').classList.remove('active');
-            targetTension = 0; 
+            targetTension = 0;
+            hrActive = false;
+            ppgSamples = [];
+            hrBPM = 0;
+            document.getElementById('hr-value').textContent = "--";
         }
+
         previewCtx.restore();
     }
 
@@ -523,7 +540,7 @@
 
     const cameraUtils = new Camera(videoElement, {
         onFrame: async () => {
-            await hands.send({image: videoElement});
+            await hands.send({ image: videoElement });
         },
         width: 640,
         height: 480
@@ -539,7 +556,6 @@
         });
 
     // --- Animation Loop ---
-
     function animate() {
         requestAnimationFrame(animate);
         
@@ -548,11 +564,10 @@
         // Smooth tension
         handTension += (targetTension - handTension) * 0.1;
 
-        // Update tension UI bar
+        // Tension bar UI
         const bar = document.getElementById('tension-bar');
         bar.style.width = `${handTension * 100}%`;
-        
-        // Color transition of bar
+
         const currentR = THREE.MathUtils.lerp(colorCells.r, colorOrgans.r, handTension);
         const currentG = THREE.MathUtils.lerp(colorCells.g, colorOrgans.g, handTension);
         const currentB = THREE.MathUtils.lerp(colorCells.b, colorOrgans.b, handTension);
@@ -561,20 +576,22 @@
         const positionsArray = geometry.attributes.position.array;
         const colorsArray = geometry.attributes.color.array;
 
-        // Behaviour based on tension
-        const noiseAmplitude = THREE.MathUtils.lerp(2.0, 0.05, handTension); 
-        const formStrength  = THREE.MathUtils.lerp(0.01, 0.18, handTension); 
+        // Behaviour:
+        // - below threshold: loose & scattered, low formStrength
+        // - above threshold: snap into heart strongly
+        const isFist = handTension >= FIST_TENSION_THRESHOLD;
+        const noiseAmplitude = THREE.MathUtils.lerp(2.0, 0.05, handTension);
+        const baseFormStrength = isFist ? 0.2 : 0.02;
 
-        // Heartbeat pulsation synced to HR (or fallback 60 bpm)
+        // Heart pulsation: only really meaningful when HR present
         const bpm = hrBPM > 0 ? hrBPM : 60;
         const beatsPerSec = bpm / 60;
         const phase = time * beatsPerSec * Math.PI * 2;
-        const beatWave = (Math.sin(phase) + 1) / 2; // 0..1
+        const beatWave = (Math.sin(phase) + 1) / 2;
         const beatAmp = THREE.MathUtils.lerp(0.02, 0.12, handTension);
         const scale = 1.0 + beatWave * beatAmp;
         particles.scale.set(scale, scale, scale);
 
-        // Slowly rotate for depth
         particles.rotation.y = Math.sin(time * 0.2) * 0.3;
         particles.rotation.z = Math.sin(time * 0.1) * 0.1;
 
@@ -595,13 +612,13 @@
             const dy = ty - cy;
             const dz = tz - cz;
 
-            if (handTension > 0.1) {
-                // High tension: particles snap tightly into the heart volume
-                cx += dx * formStrength;
-                cy += dy * formStrength;
-                cz += dz * formStrength;
+            if (isFist) {
+                // Strong pull into heart when fist closed
+                cx += dx * baseFormStrength;
+                cy += dy * baseFormStrength;
+                cz += dz * baseFormStrength;
             } else {
-                // Low tension: looser, cellular drift around target
+                // Lower tension: soft convergence + drift
                 const driftX = Math.sin(time + randomness[ix] * 10) * 0.02;
                 const driftY = Math.cos(time + randomness[iy] * 10) * 0.02;
 
@@ -610,7 +627,7 @@
                 cz += dz * 0.01;
             }
 
-            // Jitter (living noise)
+            // Living jitter
             cx += (Math.random() - 0.5) * noiseAmplitude * 0.08;
             cy += (Math.random() - 0.5) * noiseAmplitude * 0.08;
             cz += (Math.random() - 0.5) * noiseAmplitude * 0.08;
@@ -619,7 +636,6 @@
             positionsArray[iy] = cy;
             positionsArray[iz] = cz;
 
-            // Colour blend across the heart
             colorsArray[ix]   = currentR + (Math.random() * 0.05 * handTension);
             colorsArray[iy]   = currentG;
             colorsArray[iz]   = currentB;
@@ -631,7 +647,6 @@
         renderer.render(scene, camera);
     }
 
-    // Handle Resize
     window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
@@ -639,7 +654,6 @@
     });
 
     animate();
-
 </script>
 </body>
 </html>
