@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bio-Metric Particle System</title>
+    <title>Bio-Metric Heart System</title>
     
     <!-- Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -166,6 +166,40 @@
             margin-top: 10px;
             font-style: italic;
         }
+
+        /* HR HUD (top right) */
+        #hr-layer {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .hr-panel {
+            min-width: 160px;
+            text-align: right;
+        }
+
+        .hr-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.18em;
+            color: rgba(255,255,255,0.7);
+            margin-bottom: 4px;
+        }
+
+        #hr-value {
+            font-size: 1.6rem;
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        .hr-sub {
+            font-size: 0.75rem;
+            color: rgba(255,255,255,0.5);
+            margin-top: 4px;
+        }
     </style>
 </head>
 <body>
@@ -175,7 +209,7 @@
     <div id="ui-layer">
         <div class="glass-panel">
             <h1>Bio-Synthesis</h1>
-            <p>Interactive Particle Anatomy</p>
+            <p>Interactive Particle Heart</p>
             
             <div class="status-indicator">
                 <div id="cam-dot" class="dot"></div>
@@ -187,9 +221,18 @@
             </div>
             
             <div class="controls-hint">
-                Open Hands: Cellular State<br>
-                Closed Fists: Organ Formation
+                Open Hands: Relaxed field<br>
+                Closed Fists: High tension / compression
             </div>
+        </div>
+    </div>
+
+    <!-- HR HUD -->
+    <div id="hr-layer">
+        <div class="glass-panel hr-panel">
+            <div class="hr-label">Heart Rate</div>
+            <div id="hr-value">--</div>
+            <div class="hr-sub">PPG derived</div>
         </div>
     </div>
 
@@ -205,7 +248,7 @@
 
 <script>
     // --- Configuration ---
-    const PARTICLE_COUNT = 12000; // Increased count for better definition
+    const PARTICLE_COUNT = 12000;
     const CAM_FOV = 60;
     
     // --- Global State ---
@@ -214,15 +257,22 @@
     let handPresence = false;
     let time = 0;
 
+    // PPG / heart rate state
+    let ppgSamples = []; // { t, v }
+    let hrBPM = 0;
+    let lastHRComputeTime = 0;
+    const PPG_WINDOW_SEC = 10;   // sliding window
+    const PPG_MIN_SEC = 5;       // minimum data window for HR
+
     // --- 3D Scene Setup ---
     const container = document.getElementById('canvas-container');
     const scene = new THREE.Scene();
-    // Add subtle fog for depth
+    // Subtle fog for depth
     scene.fog = new THREE.FogExp2(0x050505, 0.02);
 
     const camera = new THREE.PerspectiveCamera(CAM_FOV, window.innerWidth / window.innerHeight, 0.1, 100);
     camera.position.z = 9;
-    camera.position.y = 0.5;
+    camera.position.y = 0.8;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -231,7 +281,7 @@
 
     // --- Particle System Generation ---
 
-    // Helper: Generate a soft circle texture for particles
+    // Helper: Soft circle texture for particles
     function createParticleTexture() {
         const canvas = document.createElement('canvas');
         canvas.width = 32;
@@ -248,121 +298,57 @@
         return texture;
     }
 
-    // Geometry Construction
+    // Heart shape sampling (implicit 3D heart)
+    // Based on classic heart equation:
+    // (x^2 + (9/4)y^2 + z^2 - 1)^3 - x^2 z^3 - (9/80) y^2 z^3 <= 0
+    function randomPointInHeart() {
+        while (true) {
+            const x = (Math.random() * 2 - 1) * 1.3;
+            const y = (Math.random() * 2 - 1) * 1.3;
+            const z = (Math.random() * 2 - 1) * 1.3;
+            const a = x*x + (9/4)*y*y + z*z - 1;
+            const f = a*a*a - x*x*z*z*z - (9/80)*y*y*z*z*z;
+            if (f <= 0) {
+                // Slight scale to look good in camera framing
+                return { x: x * 1.4, y: y * 1.4, z: z * 1.2 };
+            }
+        }
+    }
+
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(PARTICLE_COUNT * 3);
     const targetPositions = new Float32Array(PARTICLE_COUNT * 3);
     const colors = new Float32Array(PARTICLE_COUNT * 3);
     const sizes = new Float32Array(PARTICLE_COUNT);
-    const randomness = new Float32Array(PARTICLE_COUNT * 3); // For idle animation
+    const randomness = new Float32Array(PARTICLE_COUNT * 3); // For idle animation noise
 
-    const color1 = new THREE.Color(0x00d2ff); // Cyan (Cells)
-    const color2 = new THREE.Color(0xff0055); // Red (Organs)
+    const colorCells = new THREE.Color(0x00d2ff); // Cyan (low tension)
+    const colorOrgans = new THREE.Color(0xff0055); // Magenta/red (high tension)
 
-    // Helper: Random point inside a tapered cylinder (for better anatomy)
-    // rTop: radius at top, rBot: radius at bottom
-    // yCenter: center Y coordinate
-    // height: total height
-    function randomPointInTaperedCylinder(rTop, rBot, height, yCenter, xOffset = 0) {
-        const v = Math.random() - 0.5; // Range -0.5 to 0.5
-        const y = yCenter + v * height;
-        
-        // Linear interpolation of radius based on height
-        // v = -0.5 (bottom) => t = 0
-        // v = 0.5 (top) => t = 1
-        const t = v + 0.5;
-        const rCurrent = rBot + (rTop - rBot) * t;
-
-        const theta = Math.random() * 2 * Math.PI;
-        // Use sqrt for uniform distribution within circle
-        const r = Math.sqrt(Math.random()) * rCurrent;
-        
-        const x = xOffset + r * Math.cos(theta);
-        const z = r * Math.sin(theta);
-        
-        return { x, y, z };
-    }
-
-    // Helper: Ellipsoid for head
-    function randomPointInEllipsoid(rx, ry, rz, yCenter) {
-        // Uniform point in sphere logic, then scale
-        const u = Math.random();
-        const v = Math.random();
-        const theta = 2 * Math.PI * u;
-        const phi = Math.acos(2 * v - 1);
-        const rCube = Math.cbrt(Math.random());
-        
-        return {
-            x: rCube * Math.sin(phi) * Math.cos(theta) * rx,
-            y: yCenter + rCube * Math.sin(phi) * Math.sin(theta) * ry,
-            z: rCube * Math.cos(phi) * rz
-        };
-    }
-
-    // Distribute particles to form a realistic human silhouette
+    // Fill geometry with heart-distributed target positions
     for (let i = 0; i < PARTICLE_COUNT; i++) {
-        let p;
-        const part = Math.random();
-        
-        // Anatomy Distribution Probabilities
-        if (part < 0.06) { 
-            // Head (Ellipsoid)
-            p = randomPointInEllipsoid(0.45, 0.55, 0.5, 2.9);
-        } else if (part < 0.08) {
-            // Neck
-            p = randomPointInTaperedCylinder(0.2, 0.22, 0.4, 2.45);
-        } else if (part < 0.28) { 
-            // Chest / Upper Torso (Wider at shoulders, tapers down)
-            p = randomPointInTaperedCylinder(0.75, 0.55, 1.0, 1.85);
-        } else if (part < 0.43) {
-            // Abdomen / Hips (Narrow waist, wider hips)
-            p = randomPointInTaperedCylinder(0.55, 0.65, 1.0, 0.85);
-        } else if (part < 0.55) {
-            // Upper Arms (L)
-            p = randomPointInTaperedCylinder(0.22, 0.18, 1.1, 1.8, -1.0);
-        } else if (part < 0.67) {
-            // Upper Arms (R)
-            p = randomPointInTaperedCylinder(0.22, 0.18, 1.1, 1.8, 1.0);
-        } else if (part < 0.74) {
-            // Forearms (L)
-            p = randomPointInTaperedCylinder(0.18, 0.12, 1.2, 0.7, -1.1);
-        } else if (part < 0.81) {
-            // Forearms (R)
-            p = randomPointInTaperedCylinder(0.18, 0.12, 1.2, 0.7, 1.1);
-        } else if (part < 0.86) {
-            // Thighs (L) - Tapered
-            p = randomPointInTaperedCylinder(0.3, 0.2, 1.5, -0.3, -0.4);
-        } else if (part < 0.91) {
-            // Thighs (R) - Tapered
-            p = randomPointInTaperedCylinder(0.3, 0.2, 1.5, -0.3, 0.4);
-        } else if (part < 0.955) {
-            // Calves (L)
-            p = randomPointInTaperedCylinder(0.18, 0.12, 1.5, -1.8, -0.45);
-        } else {
-            // Calves (R)
-            p = randomPointInTaperedCylinder(0.18, 0.12, 1.5, -1.8, 0.45);
-        }
+        const p = randomPointInHeart();
 
-        // Set Target (Formed Body)
-        targetPositions[i * 3] = p.x;
+        // Target: heart shape
+        targetPositions[i * 3]     = p.x;
         targetPositions[i * 3 + 1] = p.y;
         targetPositions[i * 3 + 2] = p.z;
 
-        // Set Current (Start exploded/scattered)
-        positions[i * 3] = (Math.random() - 0.5) * 20;
+        // Start scattered
+        positions[i * 3]     = (Math.random() - 0.5) * 20;
         positions[i * 3 + 1] = (Math.random() - 0.5) * 20;
         positions[i * 3 + 2] = (Math.random() - 0.5) * 15;
 
-        // Colors (Start Blue)
-        colors[i * 3] = color1.r;
-        colors[i * 3 + 1] = color1.g;
-        colors[i * 3 + 2] = color1.b;
+        // Start color (cells)
+        colors[i * 3]     = colorCells.r;
+        colors[i * 3 + 1] = colorCells.g;
+        colors[i * 3 + 2] = colorCells.b;
 
-        // Size
-        sizes[i] = Math.random();
+        // Size variation
+        sizes[i] = 0.5 + Math.random() * 0.5;
 
-        // Random noise vector
-        randomness[i*3] = (Math.random() - 0.5);
+        // Noise vector
+        randomness[i*3]   = (Math.random() - 0.5);
         randomness[i*3+1] = (Math.random() - 0.5);
         randomness[i*3+2] = (Math.random() - 0.5);
     }
@@ -371,28 +357,66 @@
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 
-    // Material
     const material = new THREE.PointsMaterial({
         size: 0.1,
         vertexColors: true,
         map: createParticleTexture(),
         transparent: true,
-        opacity: 0.8,
+        opacity: 0.85,
         depthWrite: false,
         blending: THREE.AdditiveBlending
     });
 
     const particles = new THREE.Points(geometry, material);
+    particles.rotation.x = -0.2; // slight tilt
     scene.add(particles);
 
-    // --- MediaPipe Hands Setup ---
+    // --- MediaPipe Hands + Webcam Setup ---
     const videoElement = document.getElementById('input-video');
     const previewCanvas = document.getElementById('preview-canvas');
     const previewCtx = previewCanvas.getContext('2d');
     
-    // Scale preview canvas
     previewCanvas.width = 320;
     previewCanvas.height = 240;
+
+    function computeHeartRateFromPPG(nowSec) {
+        if (ppgSamples.length < 2) return;
+
+        const tFirst = ppgSamples[0].t;
+        const tLast = ppgSamples[ppgSamples.length - 1].t;
+        const duration = tLast - tFirst;
+        if (duration < PPG_MIN_SEC) return;
+
+        // Build value array & detrend
+        const values = ppgSamples.map(s => s.v);
+        const mean = values.reduce((a, b) => a + b, 0) / values.length;
+        const detrended = values.map(v => v - mean);
+
+        // Estimate standard deviation for threshold
+        const variance = detrended.reduce((a,v)=>a+v*v,0)/detrended.length;
+        const std = Math.sqrt(variance);
+        const threshold = std * 0.5; // heuristic
+
+        // Simple peak detection
+        let peaks = 0;
+        for (let i = 1; i < detrended.length - 1; i++) {
+            if (detrended[i] > detrended[i-1] &&
+                detrended[i] > detrended[i+1] &&
+                detrended[i] > threshold) {
+                peaks++;
+            }
+        }
+
+        if (peaks < 1) return;
+
+        const bpm = (peaks / duration) * 60;
+        // Plausible human HR range
+        if (bpm >= 40 && bpm <= 180) {
+            hrBPM = Math.round(bpm);
+            const hrEl = document.getElementById('hr-value');
+            hrEl.textContent = hrBPM + " bpm";
+        }
+    }
 
     function onResults(results) {
         // Draw preview
@@ -400,6 +424,41 @@
         previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
         previewCtx.drawImage(results.image, 0, 0, previewCanvas.width, previewCanvas.height);
         
+        const nowSec = performance.now() / 1000;
+
+        // --- PPG sampling (simple ROI in the center) ---
+        const roiSize = 30;
+        const cx = Math.floor(previewCanvas.width / 2);
+        const cy = Math.floor(previewCanvas.height / 2);
+        const x0 = Math.max(0, cx - roiSize / 2);
+        const y0 = Math.max(0, cy - roiSize / 2);
+        const w = Math.min(roiSize, previewCanvas.width - x0);
+        const h = Math.min(roiSize, previewCanvas.height - y0);
+
+        const imgData = previewCtx.getImageData(x0, y0, w, h);
+        const data = imgData.data;
+        let sumG = 0;
+        let count = 0;
+        for (let i = 0; i < data.length; i += 4) {
+            const g = data[i + 1]; // green channel
+            sumG += g;
+            count++;
+        }
+        if (count > 0) {
+            const avgG = sumG / count;
+            ppgSamples.push({ t: nowSec, v: avgG });
+            // Keep only last PPG_WINDOW_SEC seconds
+            while (ppgSamples.length > 0 && (nowSec - ppgSamples[0].t) > PPG_WINDOW_SEC) {
+                ppgSamples.shift();
+            }
+            // Compute HR at most once per second
+            if (nowSec - lastHRComputeTime > 1.0) {
+                computeHeartRateFromPPG(nowSec);
+                lastHRComputeTime = nowSec;
+            }
+        }
+
+        // --- Hand tracking & tension ---
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
             handPresence = true;
             document.getElementById('status-text').innerText = "Hands Detected";
@@ -412,8 +471,7 @@
                 drawConnectors(previewCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 1});
                 drawLandmarks(previewCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 2});
 
-                // Calculate Tension (Fist clench)
-                // Measure distance between wrist (0) and tips (8, 12, 16, 20)
+                // Tension: distance wrist -> fingertips
                 const wrist = landmarks[0];
                 const tips = [8, 12, 16, 20];
                 let avgTipDist = 0;
@@ -429,8 +487,6 @@
                 });
                 avgTipDist /= 4;
 
-                // Heuristic: Open hand tip dist approx 0.3-0.4, Fist approx 0.1-0.15
-                // Map to 0-1 range
                 const openVal = 0.35;
                 const closedVal = 0.15;
                 
@@ -447,7 +503,6 @@
             handPresence = false;
             document.getElementById('status-text').innerText = "Searching for hands...";
             document.getElementById('cam-dot').classList.remove('active');
-            // Slowly decay tension if hands lost
             targetTension = 0; 
         }
         previewCtx.restore();
@@ -490,86 +545,84 @@
         
         time += 0.01;
 
-        // Smooth tension value
+        // Smooth tension
         handTension += (targetTension - handTension) * 0.1;
 
-        // Update UI
+        // Update tension UI bar
         const bar = document.getElementById('tension-bar');
         bar.style.width = `${handTension * 100}%`;
         
-        // Color transition
-        const currentR = THREE.MathUtils.lerp(color1.r, color2.r, handTension);
-        const currentG = THREE.MathUtils.lerp(color1.g, color2.g, handTension);
-        const currentB = THREE.MathUtils.lerp(color1.b, color2.b, handTension);
+        // Color transition of bar
+        const currentR = THREE.MathUtils.lerp(colorCells.r, colorOrgans.r, handTension);
+        const currentG = THREE.MathUtils.lerp(colorCells.g, colorOrgans.g, handTension);
+        const currentB = THREE.MathUtils.lerp(colorCells.b, colorOrgans.b, handTension);
         bar.style.background = `rgb(${currentR*255}, ${currentG*255}, ${currentB*255})`;
 
         const positionsArray = geometry.attributes.position.array;
         const colorsArray = geometry.attributes.color.array;
 
-        // Define state parameters based on tension
-        // Low Tension: High noise, large spread, blue
-        // High Tension: Low noise, tight form, red
-        
+        // Behaviour based on tension
         const noiseAmplitude = THREE.MathUtils.lerp(2.0, 0.05, handTension); 
-        const formStrength = THREE.MathUtils.lerp(0.01, 0.15, handTension); // How strongly they snap to target
+        const formStrength  = THREE.MathUtils.lerp(0.01, 0.18, handTension); 
 
-        // Rotate the whole system slowly
-        particles.rotation.y = Math.sin(time * 0.2) * 0.2;
+        // Heartbeat pulsation synced to HR (or fallback 60 bpm)
+        const bpm = hrBPM > 0 ? hrBPM : 60;
+        const beatsPerSec = bpm / 60;
+        const phase = time * beatsPerSec * Math.PI * 2;
+        const beatWave = (Math.sin(phase) + 1) / 2; // 0..1
+        const beatAmp = THREE.MathUtils.lerp(0.02, 0.12, handTension);
+        const scale = 1.0 + beatWave * beatAmp;
+        particles.scale.set(scale, scale, scale);
+
+        // Slowly rotate for depth
+        particles.rotation.y = Math.sin(time * 0.2) * 0.3;
+        particles.rotation.z = Math.sin(time * 0.1) * 0.1;
 
         for (let i = 0; i < PARTICLE_COUNT; i++) {
             const ix = i * 3;
             const iy = i * 3 + 1;
             const iz = i * 3 + 2;
 
-            // Target coords
             const tx = targetPositions[ix];
             const ty = targetPositions[iy];
             const tz = targetPositions[iz];
 
-            // Current coords
             let cx = positionsArray[ix];
             let cy = positionsArray[iy];
             let cz = positionsArray[iz];
 
-            // 1. Attraction Force (Move towards body shape)
-            // If tension is high, move fast. If low, move slow or drift away.
             const dx = tx - cx;
             const dy = ty - cy;
             const dz = tz - cz;
 
-            // Apply movement
             if (handTension > 0.1) {
-                // Moving towards organ structure
+                // High tension: particles snap tightly into the heart volume
                 cx += dx * formStrength;
                 cy += dy * formStrength;
                 cz += dz * formStrength;
             } else {
-                // Cellular drift (Brownian motion-ish around target but looser)
-                // Add a "Breathing" expansion effect when hands are open
+                // Low tension: looser, cellular drift around target
                 const driftX = Math.sin(time + randomness[ix] * 10) * 0.02;
                 const driftY = Math.cos(time + randomness[iy] * 10) * 0.02;
-                
-                // Explode outwards slightly based on randomness center
-                cx += driftX + (cx * 0.01); 
-                cy += driftY + (cy * 0.01);
-                cz += (dz * 0.01); // Slowly return to Z plane
+
+                cx += dx * 0.01 + driftX;
+                cy += dy * 0.01 + driftY;
+                cz += dz * 0.01;
             }
 
-            // 2. Add Noise/Jitter (Living cell movement vs Solid tissue)
-            cx += (Math.random() - 0.5) * noiseAmplitude * 0.1;
-            cy += (Math.random() - 0.5) * noiseAmplitude * 0.1;
-            cz += (Math.random() - 0.5) * noiseAmplitude * 0.1;
+            // Jitter (living noise)
+            cx += (Math.random() - 0.5) * noiseAmplitude * 0.08;
+            cy += (Math.random() - 0.5) * noiseAmplitude * 0.08;
+            cz += (Math.random() - 0.5) * noiseAmplitude * 0.08;
 
-            // 3. Update Position
             positionsArray[ix] = cx;
             positionsArray[iy] = cy;
             positionsArray[iz] = cz;
 
-            // 4. Update Color
-            // Lerp per particle for organic feel
-            colorsArray[ix] = currentR + (Math.random() * 0.1 * handTension);
-            colorsArray[iy] = currentG;
-            colorsArray[iz] = currentB;
+            // Colour blend across the heart
+            colorsArray[ix]   = currentR + (Math.random() * 0.05 * handTension);
+            colorsArray[iy]   = currentG;
+            colorsArray[iz]   = currentB;
         }
 
         geometry.attributes.position.needsUpdate = true;
