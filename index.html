@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Emergency Scene - Bio-Particles</title>
+    <title>Two-Handed Bio-Metric Scene</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     
@@ -13,7 +13,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
     <style>
-        body { margin: 0; overflow: hidden; background-color: #050505; font-family: sans-serif; color: white; }
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', sans-serif; color: white; }
         #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
         #input-video { position: absolute; opacity: 0; pointer-events: none; }
         
@@ -23,19 +23,29 @@
         }
 
         .glass-panel {
-            background: rgba(20, 20, 30, 0.6);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(10, 15, 20, 0.75);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
             padding: 20px;
             border-radius: 12px;
-            width: 280px;
+            width: 320px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
         }
 
-        h1 { margin: 0 0 10px 0; font-size: 1.1rem; letter-spacing: 2px; text-transform: uppercase; color: #fff; border-bottom: 1px solid #444; padding-bottom: 5px; }
-        .instruction { font-size: 0.85rem; color: #aaa; margin-bottom: 5px; display: flex; align-items: center; gap: 10px; }
-        .color-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        h1 { margin: 0 0 15px 0; font-size: 1.0rem; letter-spacing: 2px; text-transform: uppercase; color: #fff; border-bottom: 1px solid #444; padding-bottom: 5px; }
         
-        .active-state { color: white; font-weight: bold; text-shadow: 0 0 10px white; }
+        .hand-section { margin-bottom: 15px; }
+        .hand-title { font-size: 0.75rem; color: #888; text-transform: uppercase; margin-bottom: 5px; font-weight: bold; }
+        
+        .instruction { font-size: 0.9rem; color: #aaa; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; transition: color 0.3s; }
+        .color-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; opacity: 0.5; }
+        
+        .active-state { color: white; font-weight: bold; text-shadow: 0 0 10px rgba(255,255,255,0.5); }
+        .active-state .color-dot { opacity: 1; box-shadow: 0 0 8px currentColor; }
+
+        /* Metric Bar for Right Hand Tension */
+        .bar-container { width: 100%; height: 6px; background: #333; border-radius: 3px; overflow: hidden; margin-top:5px; }
+        .bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #ffaa00, #ff5500); transition: width 0.1s; }
 
         #loading {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -46,30 +56,36 @@
 </head>
 <body>
 
-    <div id="loading">LOADING SCENE...</div>
+    <div id="loading">INITIALIZING DUAL-HAND SYSTEM...</div>
 
     <div id="ui-layer">
         <div class="glass-panel">
-            <h1>Emergency Scene</h1>
+            <h1>Bio-Control Interface</h1>
             
-            <div id="state-patient" class="instruction">
-                <span class="color-dot" style="background:#00d2ff"></span>
-                <span>Open Hand: <b>PATIENT</b></span>
-            </div>
-            
-            <div id="state-medic" class="instruction">
-                <span class="color-dot" style="background:#00ff88"></span>
-                <span>Fist: <b>MEDIC</b></span>
+            <div class="hand-section">
+                <div class="hand-title">Left Hand (Selects Shape)</div>
+                <div id="state-patient" class="instruction">
+                    <span class="color-dot" style="background:#00d2ff"></span> Open Hand: <b>PATIENT</b>
+                </div>
+                <div id="state-medic" class="instruction">
+                    <span class="color-dot" style="background:#00ff88"></span> Fist: <b>MEDIC</b>
+                </div>
+                <div id="state-balloon" class="instruction">
+                    <span class="color-dot" style="background:#ff3333"></span> Point: <b>BALLOON</b>
+                </div>
             </div>
 
-            <div id="state-balloon" class="instruction">
-                <span class="color-dot" style="background:#ff3333"></span>
-                <span>Point Finger: <b>BALLOON</b></span>
+            <div class="hand-section" style="border-top: 1px solid #333; padding-top:10px;">
+                <div class="hand-title">Right Hand (Condenses Form)</div>
+                <div class="instruction" style="justify-content: space-between;">
+                    <span>Open (Scatter)</span>
+                    <span>Close (Form)</span>
+                </div>
+                <div class="bar-container">
+                    <div id="tension-bar" class="bar-fill"></div>
+                </div>
             </div>
             
-            <div style="margin-top:15px; font-size:0.8rem; color:#666; border-top:1px solid #333; padding-top:10px;">
-                Status: <span id="status-text">Detecting...</span>
-            </div>
         </div>
     </div>
 
@@ -81,24 +97,18 @@
     const PARTICLE_COUNT = 15000;
     
     // --- State Management ---
-    const MODES = {
-        PATIENT: 'patient',
-        MEDIC: 'medic',
-        BALLOON: 'balloon',
-        IDLE: 'idle'
-    };
+    const MODES = { PATIENT: 'patient', MEDIC: 'medic', BALLOON: 'balloon' };
     
-    let currentMode = MODES.IDLE;
-    let targetMode = MODES.PATIENT; // Default start
-    let transitionProgress = 0; // 0 to 1
-
+    // Global Control State
+    let currentShape = MODES.PATIENT; 
+    let condensationLevel = 0; // 0.0 (Exploded) to 1.0 (Formed)
+    
     // Colors
     const COLORS = {
-        patient: new THREE.Color(0x00d2ff), // Cyan
-        medic: new THREE.Color(0x00ff88),   // Medic Green
-        balloon: new THREE.Color(0xff3333)  // Alert Red
+        patient: new THREE.Color(0x00d2ff),
+        medic: new THREE.Color(0x00ff88),
+        balloon: new THREE.Color(0xff3333)
     };
-
     let currentColor = COLORS.patient.clone();
     let targetColor = COLORS.patient.clone();
 
@@ -108,8 +118,7 @@
     scene.fog = new THREE.FogExp2(0x050505, 0.02);
 
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-    camera.position.set(0, 1, 10);
-    camera.lookAt(0, 0, 0);
+    camera.position.set(0, 0, 10);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -117,21 +126,22 @@
 
     // --- Particle System ---
     
-    // Arrays to hold different shape coordinates
+    // Target Buffers (Where particles want to go)
     const targets = {
         patient: new Float32Array(PARTICLE_COUNT * 3),
         medic: new Float32Array(PARTICLE_COUNT * 3),
         balloon: new Float32Array(PARTICLE_COUNT * 3)
     };
 
+    // Random Start Buffers (Where particles explode to)
+    const chaosPositions = new Float32Array(PARTICLE_COUNT * 3);
+
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(PARTICLE_COUNT * 3);
     const colors = new Float32Array(PARTICLE_COUNT * 3);
-    const randoms = new Float32Array(PARTICLE_COUNT * 3);
+    const randoms = new Float32Array(PARTICLE_COUNT);
 
     // --- Geometry Generators ---
-
-    // 1. Helper: Tapered Cylinder
     function getCylinderPoint(rTop, rBot, height, yCenter, xOffset=0, zOffset=0, axis='y') {
         const v = Math.random() - 0.5; 
         const hPos = v * height;
@@ -141,222 +151,189 @@
         const r = Math.sqrt(Math.random()) * rCurrent;
 
         let p = { x:0, y:0, z:0 };
-
         if (axis === 'y') {
-            // Standing up
             p.x = xOffset + r * Math.cos(theta);
             p.y = yCenter + hPos;
             p.z = zOffset + r * Math.sin(theta);
-        } else if (axis === 'x') {
-            // Lying down (Patient)
-            p.x = xOffset + hPos; // Length is along X
+        } else {
+            p.x = xOffset + hPos;
             p.y = yCenter + r * Math.cos(theta);
             p.z = zOffset + r * Math.sin(theta);
         }
         return p;
     }
 
-    // 2. Generator: PATIENT (Lying down at Y = -2)
+    // 1. PATIENT (Lying down)
     function generatePatient() {
         for (let i = 0; i < PARTICLE_COUNT; i++) {
-            let p;
-            const r = Math.random();
-            const yLevel = -2.0; // Floor level
-
-            if (r < 0.1) { // Head (Sphere-ish)
-                const u = Math.random(), v = Math.random();
-                const theta = 2 * Math.PI * u, phi = Math.acos(2 * v - 1);
-                const rad = 0.5 * Math.cbrt(Math.random());
-                p = {
-                    x: -2.5 + rad * Math.sin(phi) * Math.cos(theta), // Head at left
-                    y: yLevel + rad * Math.sin(phi) * Math.sin(theta),
-                    z: rad * Math.cos(phi)
-                };
-            } else if (r < 0.4) { // Torso (Lying X axis)
-                p = getCylinderPoint(0.7, 0.6, 2.0, -1.0, -1.0, 0, 'x'); // Center X approx -1
-                p.y += (yLevel - -1.0); // Adjust to floor
-            } else if (r < 0.9) { // Legs (Lying X axis)
-                p = getCylinderPoint(0.3, 0.2, 2.5, 1.5, 1.5, 0, 'x');
-                p.y += (yLevel - 1.5);
-            } else { // Arms (Lying beside body)
-                p = getCylinderPoint(0.15, 0.1, 2.0, -1.0, -1.0, 0.8, 'x'); // Arm offset Z
-                p.y += (yLevel - -1.0);
-            }
-            
-            targets.patient[i*3] = p.x;
-            targets.patient[i*3+1] = p.y;
-            targets.patient[i*3+2] = p.z;
+            let p; const r = Math.random(); const yLevel = -2.0;
+            if (r < 0.1) { 
+                // Head
+                const u = Math.random(), v = Math.random(), theta = 2*Math.PI*u, phi = Math.acos(2*v-1), rad=0.5;
+                p = { x: -2.5+rad*Math.sin(phi)*Math.cos(theta), y: yLevel+rad*Math.sin(phi)*Math.sin(theta), z: rad*Math.cos(phi) };
+            } else if (r < 0.4) { p = getCylinderPoint(0.7, 0.6, 2.0, -1.0, -1.0, 0, 'x'); p.y += (yLevel - -1.0); } 
+            else if (r < 0.9) { p = getCylinderPoint(0.3, 0.2, 2.5, 1.5, 1.5, 0, 'x'); p.y += (yLevel - 1.5); } 
+            else { p = getCylinderPoint(0.15, 0.1, 2.0, -1.0, -1.0, 0.8, 'x'); p.y += (yLevel - -1.0); }
+            targets.patient[i*3]=p.x; targets.patient[i*3+1]=p.y; targets.patient[i*3+2]=p.z;
         }
     }
 
-    // 3. Generator: MEDIC (Leaning over patient)
+    // 2. MEDIC (Leaning)
     function generateMedic() {
         for (let i = 0; i < PARTICLE_COUNT; i++) {
-            let p;
-            const r = Math.random();
-            // Medic stands slightly offset in Z and X, leaning towards patient chest
-            const xOff = -0.5; 
-            const zOff = -1.5; 
-
-            if (r < 0.08) { // Head
-                const u = Math.random(), v = Math.random();
-                const theta = 2 * Math.PI * u, phi = Math.acos(2 * v - 1);
-                const rad = 0.45 * Math.cbrt(Math.random());
-                p = { // Leaning forward head
-                    x: xOff + rad * Math.sin(phi) * Math.cos(theta),
-                    y: 0.5 + rad * Math.sin(phi) * Math.sin(theta), 
-                    z: zOff + 1.0 + rad * Math.cos(phi) // Leaning in Z
-                };
-            } else if (r < 0.4) { // Torso (Angled)
-                // Approximating a leaning torso by tilting a cylinder manually
-                const raw = getCylinderPoint(0.6, 0.5, 1.5, 0, 0, 0, 'y');
-                // Rotate around X axis to lean forward
-                const angle = 0.5; // Radians lean
-                p = {
-                    x: xOff + raw.x,
-                    y: (raw.y * Math.cos(angle) - raw.z * Math.sin(angle)) - 0.5,
-                    z: zOff + (raw.y * Math.sin(angle) + raw.z * Math.cos(angle))
-                };
-            } else if (r < 0.7) { // Legs (Kneeling-ish)
-                p = getCylinderPoint(0.25, 0.2, 1.5, -1.5, xOff-0.3, zOff, 'y');
-            } else { // Arms (Reaching down)
-                const raw = getCylinderPoint(0.15, 0.12, 1.2, -0.2, 0, 0, 'y');
-                 // Reach forward
-                 const angle = 1.0; 
-                 p = {
-                    x: xOff + raw.x,
-                    y: (raw.y * Math.cos(angle) - raw.z * Math.sin(angle)) + 0.5,
-                    z: zOff + (raw.y * Math.sin(angle) + raw.z * Math.cos(angle)) + 0.5
-                };
+            let p; const r = Math.random(); const xOff = -0.5; const zOff = -1.5;
+            if (r < 0.08) { 
+                const u=Math.random(), v=Math.random(), theta=2*Math.PI*u, phi=Math.acos(2*v-1), rad=0.45;
+                p = { x: xOff+rad*Math.sin(phi)*Math.cos(theta), y: 0.5+rad*Math.sin(phi)*Math.sin(theta), z: zOff+1.0+rad*Math.cos(phi) };
+            } else if (r < 0.4) { 
+                const raw = getCylinderPoint(0.6, 0.5, 1.5, 0, 0, 0, 'y'); const angle = 0.5;
+                p = { x: xOff+raw.x, y: (raw.y*Math.cos(angle)-raw.z*Math.sin(angle))-0.5, z: zOff+(raw.y*Math.sin(angle)+raw.z*Math.cos(angle)) };
+            } else if (r < 0.7) { p = getCylinderPoint(0.25, 0.2, 1.5, -1.5, xOff-0.3, zOff, 'y'); } 
+            else { 
+                const raw = getCylinderPoint(0.15, 0.12, 1.2, -0.2, 0, 0, 'y'); const angle = 1.0;
+                p = { x: xOff+raw.x, y: (raw.y*Math.cos(angle)-raw.z*Math.sin(angle))+0.5, z: zOff+(raw.y*Math.sin(angle)+raw.z*Math.cos(angle))+0.5 };
             }
-            targets.medic[i*3] = p.x;
-            targets.medic[i*3+1] = p.y;
-            targets.medic[i*3+2] = p.z;
+            targets.medic[i*3]=p.x; targets.medic[i*3+1]=p.y; targets.medic[i*3+2]=p.z;
         }
     }
 
-    // 4. Generator: BALLOON (Attached to Chest)
+    // 3. BALLOON
     function generateBalloon() {
         for (let i = 0; i < PARTICLE_COUNT; i++) {
-            let p;
-            const r = Math.random();
-            // Patient Chest is approx x=-1, y=-2, z=0
-            const chestX = -1.0;
-            const chestY = -1.8;
-            const balloonHeight = 1.5; // Floating height
-
-            if (r < 0.7) { // The Balloon Sphere
-                const u = Math.random(), v = Math.random();
-                const theta = 2 * Math.PI * u, phi = Math.acos(2 * v - 1);
-                const rad = 0.8 * Math.cbrt(Math.random()); // Large sphere
-                p = {
-                    x: chestX + rad * Math.sin(phi) * Math.cos(theta),
-                    y: balloonHeight + rad * Math.sin(phi) * Math.sin(theta), 
-                    z: rad * Math.cos(phi)
-                };
-            } else { // The String (Line from chest to balloon)
-                const t = Math.random(); // 0 to 1
-                p = {
-                    x: chestX + (Math.random()-0.5)*0.05, // Slight jitter thickness
-                    y: chestY + (balloonHeight - chestY) * t,
-                    z: (Math.random()-0.5)*0.05
-                };
+            let p; const r = Math.random(); const chestX = -1.0; const chestY = -1.8; const h = 1.5;
+            if (r < 0.7) { 
+                const u=Math.random(), v=Math.random(), theta=2*Math.PI*u, phi=Math.acos(2*v-1), rad=0.8;
+                p = { x: chestX+rad*Math.sin(phi)*Math.cos(theta), y: h+rad*Math.sin(phi)*Math.sin(theta), z: rad*Math.cos(phi) };
+            } else { 
+                const t=Math.random(); 
+                p = { x: chestX+(Math.random()-0.5)*0.05, y: chestY+(h-chestY)*t, z: (Math.random()-0.5)*0.05 };
             }
-            targets.balloon[i*3] = p.x;
-            targets.balloon[i*3+1] = p.y;
-            targets.balloon[i*3+2] = p.z;
+            targets.balloon[i*3]=p.x; targets.balloon[i*3+1]=p.y; targets.balloon[i*3+2]=p.z;
         }
     }
 
-    // Initialize Arrays
-    generatePatient();
-    generateMedic();
-    generateBalloon();
+    // Initialize
+    generatePatient(); generateMedic(); generateBalloon();
 
-    // Fill initial positions (Exploded)
-    for(let i=0; i<PARTICLE_COUNT*3; i++) {
-        positions[i] = (Math.random()-0.5) * 20;
-        randoms[i] = Math.random();
-        colors[i] = currentColor.r; // Initialize with start color R component (simple fill)
-    }
-    
-    // Correct color initialization
+    // Generate Chaos (Exploded state)
     for(let i=0; i<PARTICLE_COUNT; i++) {
+        // Random sphere distribution for chaos
+        const theta = Math.random() * 2 * Math.PI;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const r = 5 + Math.random() * 10; // Radius between 5 and 15
+        
+        chaosPositions[i*3] = r * Math.sin(phi) * Math.cos(theta);
+        chaosPositions[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+        chaosPositions[i*3+2] = r * Math.cos(phi);
+
+        positions[i*3] = chaosPositions[i*3];
+        positions[i*3+1] = chaosPositions[i*3+1];
+        positions[i*3+2] = chaosPositions[i*3+2];
+        
         colors[i*3] = currentColor.r;
         colors[i*3+1] = currentColor.g;
         colors[i*3+2] = currentColor.b;
+        
+        randoms[i] = Math.random();
     }
 
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-    // Particle Material
     const material = new THREE.PointsMaterial({
-        size: 0.12,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.8,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
+        size: 0.12, vertexColors: true, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false
     });
-
     const particles = new THREE.Points(geometry, material);
     scene.add(particles);
 
-    // --- MediaPipe Logic ---
+    // --- MediaPipe & Logic ---
     const videoElement = document.getElementById('input-video');
 
-    function determineGesture(landmarks) {
-        // Simple logic based on finger extension
-        // Tips: 8 (Index), 12 (Middle), 16 (Ring), 20 (Pinky)
-        // PIPs: 6, 10, 14, 18 (Knuckles)
+    function calculateTension(landmarks) {
+        // Measures how closed the hand is (0 = Open, 1 = Fist)
+        const wrist = landmarks[0];
+        const tips = [8, 12, 16, 20];
+        let avgDist = 0;
+        tips.forEach(idx => {
+            const d = Math.hypot(landmarks[idx].x - wrist.x, landmarks[idx].y - wrist.y);
+            avgDist += d;
+        });
+        avgDist /= 4;
         
-        const isExtended = (tipIdx, pipIdx) => {
-            // Check distance from wrist(0)
-            const dTip = Math.hypot(landmarks[tipIdx].x - landmarks[0].x, landmarks[tipIdx].y - landmarks[0].y);
-            const dPip = Math.hypot(landmarks[pipIdx].x - landmarks[0].x, landmarks[pipIdx].y - landmarks[0].y);
-            return dTip > dPip; // Basic check
+        // Map distance: Open ~0.4, Closed ~0.15
+        let t = (0.4 - avgDist) / (0.4 - 0.15);
+        return Math.max(0, Math.min(1, t));
+    }
+
+    function determineShapeGesture(landmarks) {
+        const isExtended = (tip, pip) => {
+            return Math.hypot(landmarks[tip].x - landmarks[0].x, landmarks[tip].y - landmarks[0].y) > 
+                   Math.hypot(landmarks[pip].x - landmarks[0].x, landmarks[pip].y - landmarks[0].y);
         };
+        const fingers = [isExtended(8,6), isExtended(12,10), isExtended(16,14), isExtended(20,18)];
+        const count = fingers.filter(Boolean).length;
 
-        const indexOut = isExtended(8, 6);
-        const middleOut = isExtended(12, 10);
-        const ringOut = isExtended(16, 14);
-        const pinkyOut = isExtended(20, 18);
-
-        const extendedCount = [indexOut, middleOut, ringOut, pinkyOut].filter(Boolean).length;
-
-        if (extendedCount === 4) return MODES.PATIENT; // Open hand
-        if (extendedCount === 0) return MODES.MEDIC;   // Fist
-        if (indexOut && !middleOut && !ringOut && !pinkyOut) return MODES.BALLOON; // Pointing
-        if (indexOut && middleOut && !ringOut && !pinkyOut) return MODES.BALLOON; // Peace sign also accepts as balloon
-        
-        return MODES.PATIENT; // Default fallback
+        if (count === 4) return MODES.PATIENT; // Open hand
+        if (count === 0) return MODES.MEDIC;   // Fist
+        if (fingers[0] && !fingers[1]) return MODES.BALLOON; // Point
+        return null; // Indeterminate
     }
 
     function onResults(results) {
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-            const landmarks = results.multiHandLandmarks[0]; // Use first hand
-            const detectedMode = determineGesture(landmarks);
+        let leftHandFound = false;
+        let rightHandFound = false;
+
+        if (results.multiHandLandmarks && results.multiHandedness) {
             
-            // Debounce/Smooth transitions could go here, but direct setting is fine for responsiveness
-            if (detectedMode !== currentMode) {
-                targetMode = detectedMode;
-                // Update UI highlighting
-                document.querySelectorAll('.instruction').forEach(el => el.classList.remove('active-state'));
-                document.getElementById(`state-${targetMode}`).classList.add('active-state');
-                document.getElementById('status-text').innerText = targetMode.toUpperCase();
+            for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                const label = results.multiHandedness[i].label; // "Left" or "Right"
+                const landmarks = results.multiHandLandmarks[i];
+
+                // NOTE: MediaPipe assumes selfie mode. 
+                // "Left" label = User's Left Hand (which appears on the right of screen).
+                // "Right" label = User's Right Hand.
+
+                if (label === 'Left') {
+                    // LEFT HAND: Selector (Shape)
+                    leftHandFound = true;
+                    const shape = determineShapeGesture(landmarks);
+                    if (shape) {
+                        currentShape = shape;
+                        
+                        // Update UI
+                        document.querySelectorAll('.instruction').forEach(el => el.classList.remove('active-state'));
+                        document.getElementById(`state-${currentShape}`).classList.add('active-state');
+                        
+                        // Update Color Target
+                        if(currentShape === MODES.PATIENT) targetColor = COLORS.patient;
+                        if(currentShape === MODES.MEDIC) targetColor = COLORS.medic;
+                        if(currentShape === MODES.BALLOON) targetColor = COLORS.balloon;
+                    }
+                } 
+                else if (label === 'Right') {
+                    // RIGHT HAND: Condenser (Tension)
+                    rightHandFound = true;
+                    const tension = calculateTension(landmarks);
+                    
+                    // Smoothly update global condensation level
+                    // Moving average for smoothness
+                    condensationLevel += (tension - condensationLevel) * 0.2; 
+                    
+                    // Update UI Bar
+                    document.getElementById('tension-bar').style.width = `${condensationLevel * 100}%`;
+                }
             }
-
-            // Set Target Color
-            if(targetMode === MODES.PATIENT) targetColor = COLORS.patient;
-            if(targetMode === MODES.MEDIC) targetColor = COLORS.medic;
-            if(targetMode === MODES.BALLOON) targetColor = COLORS.balloon;
-
+        }
+        
+        // Decay condensation if Right Hand lost
+        if (!rightHandFound) {
+            condensationLevel *= 0.9;
+            document.getElementById('tension-bar').style.width = `${condensationLevel * 100}%`;
         }
     }
 
     const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     hands.onResults(onResults);
 
     const cameraUtils = new Camera(videoElement, {
@@ -366,73 +343,73 @@
     cameraUtils.start().then(() => document.getElementById('loading').style.display = 'none');
 
     // --- Animation Loop ---
-    
     let time = 0;
-
     function animate() {
         requestAnimationFrame(animate);
         time += 0.01;
 
-        // Smooth Color Transition
+        // Color Lerp
         currentColor.lerp(targetColor, 0.05);
 
         const posArr = geometry.attributes.position.array;
         const colArr = geometry.attributes.color.array;
 
-        // Determine which target array to use
+        // Select Target Array
         let targetArr;
-        if(targetMode === MODES.PATIENT) targetArr = targets.patient;
-        else if(targetMode === MODES.MEDIC) targetArr = targets.medic;
+        if(currentShape === MODES.PATIENT) targetArr = targets.patient;
+        else if(currentShape === MODES.MEDIC) targetArr = targets.medic;
         else targetArr = targets.balloon;
 
-        // Particle Physics
         for (let i = 0; i < PARTICLE_COUNT; i++) {
             const ix = i * 3, iy = i * 3 + 1, iz = i * 3 + 2;
 
-            const tx = targetArr[ix];
-            const ty = targetArr[iy];
-            const tz = targetArr[iz];
+            // 1. Determine where this particle WANTS to be based on Right Hand Condensation
+            // If Condensation is 0: Target is ChaosPosition
+            // If Condensation is 1: Target is ShapePosition
+            
+            // We use lerp to find the ideal point in space between chaos and order
+            const tx = chaosPositions[ix] + (targetArr[ix] - chaosPositions[ix]) * condensationLevel;
+            const ty = chaosPositions[iy] + (targetArr[iy] - chaosPositions[iy]) * condensationLevel;
+            const tz = chaosPositions[iz] + (targetArr[iz] - chaosPositions[iz]) * condensationLevel;
 
+            // 2. Move current position towards that ideal point
             let cx = posArr[ix];
             let cy = posArr[iy];
             let cz = posArr[iz];
-
-            // Attraction Force (Move to target shape)
-            // Faster reaction than previous version for clearer gesture swapping
-            const speed = 0.08 + (randoms[ix] * 0.02); 
+            
+            // Speed factor - move faster when condensing
+            const speed = 0.1;
             
             cx += (tx - cx) * speed;
             cy += (ty - cy) * speed;
             cz += (tz - cz) * speed;
 
-            // Add Idle Noise (Breathing effect)
-            const noise = 0.02;
-            cx += Math.sin(time + randoms[iy]*10) * noise;
-            cy += Math.cos(time + randoms[ix]*10) * noise;
+            // 3. Add noise (Higher noise when open, lower when closed)
+            const noiseAmp = 0.05 * (1 - condensationLevel) + 0.01;
+            cx += Math.sin(time + randoms[i]*100) * noiseAmp;
+            cy += Math.cos(time + randoms[i]*50) * noiseAmp;
 
-            // Update Arrays
             posArr[ix] = cx;
             posArr[iy] = cy;
             posArr[iz] = cz;
 
-            // Update Colors
-            colArr[ix] = currentColor.r + (Math.random() * 0.1);
-            colArr[iy] = currentColor.g + (Math.random() * 0.1);
-            colArr[iz] = currentColor.b + (Math.random() * 0.1);
+            // 4. Update Color
+            colArr[ix] = currentColor.r;
+            colArr[iy] = currentColor.g;
+            colArr[iz] = currentColor.b;
         }
 
         geometry.attributes.position.needsUpdate = true;
         geometry.attributes.color.needsUpdate = true;
         
-        // Gentle scene rotation
-        particles.rotation.y = Math.sin(time * 0.1) * 0.1;
+        // Rotate scene based on condensation (Spin faster when chaotic)
+        const rotSpeed = 0.001 + (1 - condensationLevel) * 0.005;
+        scene.rotation.y += rotSpeed;
 
         renderer.render(scene, camera);
     }
 
     animate();
-    
-    // Resize Handle
     window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
