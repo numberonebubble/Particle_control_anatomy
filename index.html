@@ -3,590 +3,977 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bio-Metric Particle System</title>
+    <title>Dinosaur Extinction Particle Story</title>
     
-    <!-- Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    
-    <!-- MediaPipe Hands -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
     <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            background-color: #050505;
-            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            color: white;
-        }
-
-        #canvas-container {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: 1;
-        }
-
-        /* Hidden video element for MediaPipe */
-        #input-video {
-            position: absolute;
-            top: 0;
-            left: 0;
-            opacity: 0;
-            pointer-events: none;
-            width: 1px;
-            height: 1px;
-        }
-
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', monospace; color: white; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        
+        /* Mirror the video input for natural feel */
+        #input-video { position: absolute; opacity: 0; pointer-events: none; transform: scaleX(-1); }
+        
         #ui-layer {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            z-index: 10;
-            pointer-events: none;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
+            position: absolute; top: 20px; left: 20px; z-index: 10;
+            display: flex; flex-direction: column; gap: 10px; pointer-events: none;
         }
 
         .glass-panel {
-            background: rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 20px;
-            border-radius: 12px;
-            max-width: 300px;
-            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
-            transition: all 0.3s ease;
+            background: rgba(10, 15, 20, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 14px;
+            padding: 18px 18px 16px;
+            width: 260px;
+            box-shadow: 0 20px 35px rgba(0, 0, 0, 0.45);
         }
 
-        h1 {
-            font-size: 1.2rem;
-            margin: 0 0 10px 0;
-            font-weight: 300;
-            letter-spacing: 2px;
+        .glass-panel h1 {
+            margin: 0 0 10px;
+            font-size: 1.05rem;
+            letter-spacing: 0.08em;
             text-transform: uppercase;
-            color: #fff;
-            border-bottom: 1px solid rgba(255,255,255,0.2);
-            padding-bottom: 10px;
+            color: #a7c6ff;
         }
 
-        p {
-            font-size: 0.9rem;
-            color: #aaa;
-            margin: 0;
-            line-height: 1.5;
-        }
-
-        .status-indicator {
+        .hand-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            margin-bottom: 5px;
+            color: #668;
             display: flex;
+            justify-content: space-between;
             align-items: center;
-            gap: 10px;
-            margin-top: 15px;
         }
 
-        .dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background-color: #ff3333;
-            box-shadow: 0 0 10px #ff3333;
-            transition: background-color 0.3s;
+        .instruction { 
+            font-size: 0.8rem; color: #889; margin-bottom: 6px; 
+            display: flex; align-items: center; gap: 10px; 
+            padding: 5px 8px; border-radius: 6px;
+            transition: all 0.25s ease;
         }
         
-        .dot.active {
-            background-color: #33ffaa;
-            box-shadow: 0 0 10px #33ffaa;
+        .icon-box { 
+            width: 18px; height: 18px; border: 1px solid rgba(255,255,255,0.25); 
+            display: flex; align-items: center; justify-content: center; 
+            border-radius: 4px; font-size: 10px; 
         }
 
-        .metric-bar {
-            width: 100%;
-            height: 4px;
-            background: rgba(255,255,255,0.1);
-            margin-top: 15px;
-            border-radius: 2px;
-            overflow: hidden;
-            position: relative;
-        }
+        .active-state { background: rgba(255,255,255,0.10); color: #eef; border-left: 3px solid #ff9933; }
+        .active-state b { color: #ff9933; }
 
-        .metric-fill {
-            height: 100%;
-            width: 0%;
-            background: linear-gradient(90deg, #00d2ff, #3a7bd5);
-            transition: width 0.2s ease, background 0.5s ease;
-        }
-
-        .webcam-preview {
-            position: absolute;
-            bottom: 20px;
-            right: 20px;
-            width: 160px;
-            height: 120px;
-            border-radius: 8px;
-            overflow: hidden;
-            z-index: 10;
-            border: 1px solid rgba(255,255,255,0.2);
-            opacity: 0.7;
-        }
-
-        #preview-canvas {
-            width: 100%;
-            height: 100%;
-            transform: scaleX(-1); /* Mirror effect */
-        }
+        /* Metric Bar */
+        .bar-track { width: 100%; height: 4px; background: #223; border-radius: 2px; overflow: hidden; margin-top: 8px; }
+        .bar-fill { width: 0%; height: 100%; background: linear-gradient(90deg, #ff9933, #ffee88); transition: width 0.1s linear; }
 
         #loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
+            position: absolute; inset: 0;
+            display: flex; align-items: center; justify-content: center;
+            background: radial-gradient(circle at center, rgba(255,255,255,0.08), rgba(0,0,0,0.95));
+            font-size: 1rem; letter-spacing: 0.2em; text-transform: uppercase;
             z-index: 20;
-            font-size: 1.5rem;
-            letter-spacing: 3px;
-            animation: pulse 1.5s infinite;
-            text-align: center;
+        }
+
+        #loading::after {
+            content: ' ▓▓▓';
+            animation: pulse 1s infinite alternate;
         }
 
         @keyframes pulse {
-            0% { opacity: 0.5; }
-            50% { opacity: 1; }
-            100% { opacity: 0.5; }
-        }
-
-        .controls-hint {
-            font-size: 0.8rem;
-            color: #888;
-            margin-top: 10px;
-            font-style: italic;
+            from { opacity: 0.2; transform: translateX(-4px); }
+            to   { opacity: 1;   transform: translateX(4px);  }
         }
     </style>
 </head>
 <body>
 
-    <div id="loading">INITIALIZING BIO-SYSTEM...<br><span style="font-size:0.8rem">Allow Camera Access</span></div>
+    <div id="loading">SEEDING PARTICLE HISTORY</div>
 
     <div id="ui-layer">
         <div class="glass-panel">
-            <h1>Bio-Synthesis</h1>
-            <p>Interactive Particle Anatomy</p>
+            <h1>Extinction Story HUD</h1>
             
-            <div class="status-indicator">
-                <div id="cam-dot" class="dot"></div>
-                <span id="status-text">Waiting for camera...</span>
+            <div style="margin-bottom: 10px;">
+                <div class="hand-label">
+                    <span>Left Hand</span>
+                    <span>STORY CHAPTERS</span>
+                </div>
+                <div id="state-dinosaur" class="instruction">
+                    <div class="icon-box">✋</div> <span>Open: <b>AGE OF DINOS</b></span>
+                </div>
+                <div id="state-meteor" class="instruction">
+                    <div class="icon-box">✌️</div> <span>Peace: <b>METEOR INBOUND</b></span>
+                </div>
+                <div id="state-impact" class="instruction">
+                    <div class="icon-box">✊</div> <span>Fist: <b>IMPACT</b></span>
+                </div>
+                <div id="state-ash" class="instruction">
+                    <div class="icon-box">☰</div> <span>3 Fingers: <b>ASH WINTER</b></span>
+                </div>
+                <div id="state-heart" class="instruction">
+                    <div class="icon-box">└┐</div> <span>L-shape: <b>WORLD HEART</b></span>
+                </div>
+                <div id="state-tree" class="instruction">
+                    <div class="icon-box">🤘</div> <span>Rock: <b>RENEWAL TREE</b></span>
+                </div>
+                <div id="state-constellation" class="instruction">
+                    <div class="icon-box">☝️</div> <span>Point: <b>NEW CONSTELLATIONS</b></span>
+                </div>
             </div>
 
-            <div class="metric-bar">
-                <div id="tension-bar" class="metric-fill"></div>
-            </div>
-            
-            <div class="controls-hint">
-                Open Hands: Cellular State<br>
-                Closed Fists: Organ Formation
+            <div>
+                <div class="hand-label">
+                    <span>Right Hand</span>
+                    <span>MATTER CONDENSER</span>
+                </div>
+                <div class="instruction" style="justify-content: space-between; background:none; padding:0;">
+                    <span style="font-size:0.7rem">SCATTER</span>
+                    <span style="font-size:0.7rem">CONDENSE</span>
+                </div>
+                <div class="bar-track">
+                    <div id="tension-bar" class="bar-fill"></div>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Main 3D Container -->
     <div id="canvas-container"></div>
-
-    <!-- Webcam feed for processing (hidden) and preview (visible small) -->
     <video id="input-video" playsinline></video>
-    
-    <div class="webcam-preview">
-        <canvas id="preview-canvas"></canvas>
-    </div>
 
 <script>
     // --- Configuration ---
-    const PARTICLE_COUNT = 12000; // Increased count for better definition
-    const CAM_FOV = 60;
-    
-    // --- Global State ---
-    let handTension = 0; // 0 = open, 1 = closed
-    let targetTension = 0;
-    let handPresence = false;
-    let time = 0;
+    const PARTICLE_COUNT = 24000;
 
-    // --- 3D Scene Setup ---
+    // --- Story Shape Modes ---
+    const MODES = {
+        STATIC:        'static',
+        DINOSAUR:      'dinosaur',
+        METEOR:        'meteor',
+        IMPACT:        'impact',
+        ASH:           'ash',
+        HEART:         'heart',
+        TREE:          'tree',
+        CONSTELLATION: 'constellation'
+    };
+
+    let currentShape = MODES.STATIC;
+    let condensationLevel = 0;
+
+    // --- Colors (Three.js Color) ---
+    const COLORS = {
+        dinoBody:   new THREE.Color(0x3aa456),
+        meteorCore: new THREE.Color(0xffb347),
+        meteorTail: new THREE.Color(0xff6a33),
+        fireCore:   new THREE.Color(0xff7b3a),
+        ash:        new THREE.Color(0x6a5855),
+        skyAsh:     new THREE.Color(0x383a44),
+        heart:      new THREE.Color(0xe0314b),
+        trunk:      new THREE.Color(0x5b3a1e),
+        leaf:       new THREE.Color(0x1ea866),
+        star:       new THREE.Color(0xe5e9ff)
+    };
+
+    // --- Three.js Setup ---
     const container = document.getElementById('canvas-container');
     const scene = new THREE.Scene();
-    // Add subtle fog for depth
-    scene.fog = new THREE.FogExp2(0x050505, 0.02);
+    scene.fog = new THREE.FogExp2(0x050505, 0.032);
 
-    const camera = new THREE.PerspectiveCamera(CAM_FOV, window.innerWidth / window.innerHeight, 0.1, 100);
-    camera.position.z = 9;
-    camera.position.y = 0.5;
+    const camera = new THREE.PerspectiveCamera(
+        60,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        100
+    );
+    camera.position.set(0, 1.5, 12);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(window.devicePixelRatio);
     container.appendChild(renderer.domElement);
 
-    // --- Particle System Generation ---
+    // Soft ambient
+    const ambient = new THREE.AmbientLight(0xffffff, 0.45);
+    scene.add(ambient);
 
-    // Helper: Generate a soft circle texture for particles
-    function createParticleTexture() {
-        const canvas = document.createElement('canvas');
-        canvas.width = 32;
-        canvas.height = 32;
-        const ctx = canvas.getContext('2d');
-        const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-        grad.addColorStop(0, 'rgba(255,255,255,1)');
-        grad.addColorStop(0.4, 'rgba(255,255,255,0.5)');
-        grad.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, 32, 32);
-        const texture = new THREE.Texture(canvas);
-        texture.needsUpdate = true;
-        return texture;
-    }
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    dirLight.position.set(4, 6, 2);
+    scene.add(dirLight);
 
-    // Geometry Construction
+    // --- Particle Geometry ---
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(PARTICLE_COUNT * 3);
-    const targetPositions = new Float32Array(PARTICLE_COUNT * 3);
     const colors = new Float32Array(PARTICLE_COUNT * 3);
-    const sizes = new Float32Array(PARTICLE_COUNT);
-    const randomness = new Float32Array(PARTICLE_COUNT * 3); // For idle animation
+    const chaosPositions = new Float32Array(PARTICLE_COUNT * 3);
+    const randoms = new Float32Array(PARTICLE_COUNT);
 
-    const color1 = new THREE.Color(0x00d2ff); // Cyan (Cells)
-    const color2 = new THREE.Color(0xff0055); // Red (Organs)
+    // Seed chaos cloud
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        const idx = i * 3;
 
-    // Helper: Random point inside a tapered cylinder (for better anatomy)
-    // rTop: radius at top, rBot: radius at bottom
-    // yCenter: center Y coordinate
-    // height: total height
-    function randomPointInTaperedCylinder(rTop, rBot, height, yCenter, xOffset = 0) {
-        const v = Math.random() - 0.5; // Range -0.5 to 0.5
-        const y = yCenter + v * height;
-        
-        // Linear interpolation of radius based on height
-        // v = -0.5 (bottom) => t = 0
-        // v = 0.5 (top) => t = 1
-        const t = v + 0.5;
-        const rCurrent = rBot + (rTop - rBot) * t;
-
-        const theta = Math.random() * 2 * Math.PI;
-        // Use sqrt for uniform distribution within circle
-        const r = Math.sqrt(Math.random()) * rCurrent;
-        
-        const x = xOffset + r * Math.cos(theta);
-        const z = r * Math.sin(theta);
-        
-        return { x, y, z };
-    }
-
-    // Helper: Ellipsoid for head
-    function randomPointInEllipsoid(rx, ry, rz, yCenter) {
-        // Uniform point in sphere logic, then scale
+        // chaos sphere-ish
         const u = Math.random();
         const v = Math.random();
         const theta = 2 * Math.PI * u;
         const phi = Math.acos(2 * v - 1);
-        const rCube = Math.cbrt(Math.random());
-        
-        return {
-            x: rCube * Math.sin(phi) * Math.cos(theta) * rx,
-            y: yCenter + rCube * Math.sin(phi) * Math.sin(theta) * ry,
-            z: rCube * Math.cos(phi) * rz
-        };
-    }
+        const r = 7 * Math.cbrt(Math.random());
 
-    // Distribute particles to form a realistic human silhouette
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-        let p;
-        const part = Math.random();
-        
-        // Anatomy Distribution Probabilities
-        if (part < 0.06) { 
-            // Head (Ellipsoid)
-            p = randomPointInEllipsoid(0.45, 0.55, 0.5, 2.9);
-        } else if (part < 0.08) {
-            // Neck
-            p = randomPointInTaperedCylinder(0.2, 0.22, 0.4, 2.45);
-        } else if (part < 0.28) { 
-            // Chest / Upper Torso (Wider at shoulders, tapers down)
-            p = randomPointInTaperedCylinder(0.75, 0.55, 1.0, 1.85);
-        } else if (part < 0.43) {
-            // Abdomen / Hips (Narrow waist, wider hips)
-            p = randomPointInTaperedCylinder(0.55, 0.65, 1.0, 0.85);
-        } else if (part < 0.55) {
-            // Upper Arms (L)
-            p = randomPointInTaperedCylinder(0.22, 0.18, 1.1, 1.8, -1.0);
-        } else if (part < 0.67) {
-            // Upper Arms (R)
-            p = randomPointInTaperedCylinder(0.22, 0.18, 1.1, 1.8, 1.0);
-        } else if (part < 0.74) {
-            // Forearms (L)
-            p = randomPointInTaperedCylinder(0.18, 0.12, 1.2, 0.7, -1.1);
-        } else if (part < 0.81) {
-            // Forearms (R)
-            p = randomPointInTaperedCylinder(0.18, 0.12, 1.2, 0.7, 1.1);
-        } else if (part < 0.86) {
-            // Thighs (L) - Tapered
-            p = randomPointInTaperedCylinder(0.3, 0.2, 1.5, -0.3, -0.4);
-        } else if (part < 0.91) {
-            // Thighs (R) - Tapered
-            p = randomPointInTaperedCylinder(0.3, 0.2, 1.5, -0.3, 0.4);
-        } else if (part < 0.955) {
-            // Calves (L)
-            p = randomPointInTaperedCylinder(0.18, 0.12, 1.5, -1.8, -0.45);
-        } else {
-            // Calves (R)
-            p = randomPointInTaperedCylinder(0.18, 0.12, 1.5, -1.8, 0.45);
-        }
+        const x = r * Math.sin(phi) * Math.cos(theta);
+        const y = r * Math.sin(phi) * Math.sin(theta);
+        const z = r * Math.cos(phi);
 
-        // Set Target (Formed Body)
-        targetPositions[i * 3] = p.x;
-        targetPositions[i * 3 + 1] = p.y;
-        targetPositions[i * 3 + 2] = p.z;
+        chaosPositions[idx]     = x;
+        chaosPositions[idx + 1] = y;
+        chaosPositions[idx + 2] = z;
 
-        // Set Current (Start exploded/scattered)
-        positions[i * 3] = (Math.random() - 0.5) * 20;
-        positions[i * 3 + 1] = (Math.random() - 0.5) * 20;
-        positions[i * 3 + 2] = (Math.random() - 0.5) * 15;
+        positions[idx]     = x;
+        positions[idx + 1] = y;
+        positions[idx + 2] = z;
 
-        // Colors (Start Blue)
-        colors[i * 3] = color1.r;
-        colors[i * 3 + 1] = color1.g;
-        colors[i * 3 + 2] = color1.b;
+        const c = 0.3 + 0.3 * Math.random();
+        colors[idx]     = c;
+        colors[idx + 1] = c * 0.9;
+        colors[idx + 2] = c * 1.1;
 
-        // Size
-        sizes[i] = Math.random();
-
-        // Random noise vector
-        randomness[i*3] = (Math.random() - 0.5);
-        randomness[i*3+1] = (Math.random() - 0.5);
-        randomness[i*3+2] = (Math.random() - 0.5);
+        randoms[i] = 0.5 + Math.random() * 0.7;
     }
 
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    geometry.setAttribute('random', new THREE.BufferAttribute(randoms, 1));
 
-    // Material
     const material = new THREE.PointsMaterial({
-        size: 0.1,
+        size: 0.06,
         vertexColors: true,
-        map: createParticleTexture(),
         transparent: true,
-        opacity: 0.8,
+        opacity: 0.95,
         depthWrite: false,
         blending: THREE.AdditiveBlending
     });
 
-    const particles = new THREE.Points(geometry, material);
-    scene.add(particles);
+    const points = new THREE.Points(geometry, material);
+    scene.add(points);
 
-    // --- MediaPipe Hands Setup ---
-    const videoElement = document.getElementById('input-video');
-    const previewCanvas = document.getElementById('preview-canvas');
-    const previewCtx = previewCanvas.getContext('2d');
-    
-    // Scale preview canvas
-    previewCanvas.width = 320;
-    previewCanvas.height = 240;
+    // --- Target Shape Store ---
+    const targets = {
+        dinosaur:      { positions: null, colors: null },
+        meteor:        { positions: null, colors: null },
+        impact:        { positions: null, colors: null },
+        ash:           { positions: null, colors: null },
+        heart:         { positions: null, colors: null },
+        tree:          { positions: null, colors: null },
+        constellation: { positions: null, colors: null }
+    };
 
-    function onResults(results) {
-        // Draw preview
-        previewCtx.save();
-        previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
-        previewCtx.drawImage(results.image, 0, 0, previewCanvas.width, previewCanvas.height);
-        
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-            handPresence = true;
-            document.getElementById('status-text').innerText = "Hands Detected";
-            document.getElementById('cam-dot').classList.add('active');
+    // --- Helpers for building shapes ---
 
-            let totalTension = 0;
-            let handCount = 0;
+    function fillCapsuleRegion(start, end, radius, count, positionsArr, colorsArr, baseColor, indexRef) {
+        const ax = start[0], ay = start[1], az = start[2];
+        const bx = end[0],   by = end[1],   bz = end[2];
 
-            for (const landmarks of results.multiHandLandmarks) {
-                drawConnectors(previewCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 1});
-                drawLandmarks(previewCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 2});
+        const dx = bx - ax;
+        const dy = by - ay;
+        const dz = bz - az;
 
-                // Calculate Tension (Fist clench)
-                // Measure distance between wrist (0) and tips (8, 12, 16, 20)
-                const wrist = landmarks[0];
-                const tips = [8, 12, 16, 20];
-                let avgTipDist = 0;
-                
-                tips.forEach(idx => {
-                    const tip = landmarks[idx];
-                    const dist = Math.sqrt(
-                        Math.pow(tip.x - wrist.x, 2) + 
-                        Math.pow(tip.y - wrist.y, 2) + 
-                        Math.pow(tip.z - wrist.z, 2)
-                    );
-                    avgTipDist += dist;
-                });
-                avgTipDist /= 4;
+        for (let i = 0; i < count; i++) {
+            const t = Math.random();
+            const cx = ax + dx * t;
+            const cy = ay + dy * t;
+            const cz = az + dz * t;
 
-                // Heuristic: Open hand tip dist approx 0.3-0.4, Fist approx 0.1-0.15
-                // Map to 0-1 range
-                const openVal = 0.35;
-                const closedVal = 0.15;
-                
-                let t = (openVal - avgTipDist) / (openVal - closedVal);
-                t = Math.max(0, Math.min(1, t)); // Clamp
-                
-                totalTension += t;
-                handCount++;
-            }
-            
-            targetTension = totalTension / handCount;
+            const u = Math.random();
+            const v = Math.random();
+            const theta = 2 * Math.PI * u;
+            const phi = Math.acos(2 * v - 1);
+            const rr = radius * Math.cbrt(Math.random());
 
-        } else {
-            handPresence = false;
-            document.getElementById('status-text').innerText = "Searching for hands...";
-            document.getElementById('cam-dot').classList.remove('active');
-            // Slowly decay tension if hands lost
-            targetTension = 0; 
+            const ox = rr * Math.sin(phi) * Math.cos(theta);
+            const oy = rr * Math.sin(phi) * Math.sin(theta);
+            const oz = rr * Math.cos(phi);
+
+            const i3 = indexRef.value * 3;
+            indexRef.value++;
+
+            const x = cx + ox;
+            const y = cy + oy;
+            const z = cz + oz;
+
+            positionsArr[i3]     = x;
+            positionsArr[i3 + 1] = y;
+            positionsArr[i3 + 2] = z;
+
+            const shade = 0.8 + 0.2 * Math.random();
+            colorsArr[i3]     = baseColor.r * shade;
+            colorsArr[i3 + 1] = baseColor.g * shade;
+            colorsArr[i3 + 2] = baseColor.b * shade;
         }
-        previewCtx.restore();
     }
 
-    const hands = new Hands({locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-    }});
+    function fillResidualAsCloud(positionsArr, colorsArr, baseColor, indexRef, totalCount, radius) {
+        const col = baseColor;
+        while (indexRef.value < totalCount) {
+            const i3 = indexRef.value * 3;
+            indexRef.value++;
 
+            const u = Math.random();
+            const v = Math.random();
+            const theta = 2 * Math.PI * u;
+            const phi = Math.acos(2 * v - 1);
+            const r = radius * Math.cbrt(Math.random());
+
+            const x = r * Math.sin(phi) * Math.cos(theta);
+            const y = r * Math.sin(phi) * Math.sin(theta);
+            const z = r * Math.cos(phi);
+
+            positionsArr[i3]     = x;
+            positionsArr[i3 + 1] = y;
+            positionsArr[i3 + 2] = z;
+
+            const shade = 0.6 + 0.4 * Math.random();
+            colorsArr[i3]     = col.r * shade;
+            colorsArr[i3 + 1] = col.g * shade;
+            colorsArr[i3 + 2] = col.b * shade;
+        }
+    }
+
+    // --- Shape Generators ---
+
+    function createDinosaurTargets() {
+        const positionsArr = new Float32Array(PARTICLE_COUNT * 3);
+        const colorsArr = new Float32Array(PARTICLE_COUNT * 3);
+        const iRef = { value: 0 };
+
+        const bodyColor = COLORS.dinoBody;
+        const baseY = -2;
+
+        // Torso
+        fillCapsuleRegion(
+            [-1.0, baseY + 1.0, 0],
+            [ 1.4, baseY + 1.2, 0],
+            0.8,
+            Math.floor(PARTICLE_COUNT * 0.25),
+            positionsArr, colorsArr, bodyColor, iRef
+        );
+
+        // Tail
+        fillCapsuleRegion(
+            [-2.2, baseY + 1.0, 0],
+            [-4.0, baseY + 0.5, 0],
+            0.3,
+            Math.floor(PARTICLE_COUNT * 0.10),
+            positionsArr, colorsArr, bodyColor, iRef
+        );
+
+        // Neck + head
+        fillCapsuleRegion(
+            [1.3, baseY + 1.3, 0],
+            [2.0, baseY + 2.2, 0],
+            0.25,
+            Math.floor(PARTICLE_COUNT * 0.06),
+            positionsArr, colorsArr, bodyColor, iRef
+        );
+        fillCapsuleRegion(
+            [2.0, baseY + 2.2, 0],
+            [2.8, baseY + 2.2, 0],
+            0.35,
+            Math.floor(PARTICLE_COUNT * 0.08),
+            positionsArr, colorsArr, bodyColor, iRef
+        );
+
+        // Legs
+        fillCapsuleRegion(
+            [-0.4, baseY + 0.4, 0],
+            [-0.6, baseY - 0.4, 0],
+            0.25,
+            Math.floor(PARTICLE_COUNT * 0.08),
+            positionsArr, colorsArr, bodyColor, iRef
+        );
+        fillCapsuleRegion(
+            [0.8, baseY + 0.4, 0],
+            [0.7, baseY - 0.4, 0],
+            0.25,
+            Math.floor(PARTICLE_COUNT * 0.08),
+            positionsArr, colorsArr, bodyColor, iRef
+        );
+
+        // Tiny arms
+        fillCapsuleRegion(
+            [0.3, baseY + 1.2, 0.1],
+            [0.7, baseY + 0.9, 0.3],
+            0.10,
+            Math.floor(PARTICLE_COUNT * 0.03),
+            positionsArr, colorsArr, bodyColor, iRef
+        );
+        fillCapsuleRegion(
+            [0.3, baseY + 1.2, -0.1],
+            [0.7, baseY + 0.9, -0.3],
+            0.10,
+            Math.floor(PARTICLE_COUNT * 0.03),
+            positionsArr, colorsArr, bodyColor, iRef
+        );
+
+        // Haze / landscape
+        fillResidualAsCloud(positionsArr, colorsArr, new THREE.Color(0x1f3b23), iRef, PARTICLE_COUNT, 7);
+
+        targets.dinosaur.positions = positionsArr;
+        targets.dinosaur.colors = colorsArr;
+    }
+
+    function createMeteorInboundTargets() {
+        const positionsArr = new Float32Array(PARTICLE_COUNT * 3);
+        const colorsArr = new Float32Array(PARTICLE_COUNT * 3);
+        const iRef = { value: 0 };
+
+        const meteorColor = COLORS.meteorCore;
+        const tailColor   = COLORS.meteorTail;
+
+        const center = [0, 3.0, 0];
+        const radius = 0.9;
+
+        const sphereCount = Math.floor(PARTICLE_COUNT * 0.25);
+        for (let i = 0; i < sphereCount; i++) {
+            const i3 = iRef.value * 3;
+            iRef.value++;
+
+            const u = Math.random();
+            const v = Math.random();
+            const theta = 2 * Math.PI * u;
+            const phi = Math.acos(2 * v - 1);
+            const r = radius * Math.cbrt(Math.random());
+
+            const x = center[0] + r * Math.sin(phi) * Math.cos(theta);
+            const y = center[1] + r * Math.sin(phi) * Math.sin(theta);
+            const z = center[2] + r * Math.cos(phi);
+
+            positionsArr[i3]     = x;
+            positionsArr[i3 + 1] = y;
+            positionsArr[i3 + 2] = z;
+
+            const nx = (x - center[0]) / radius;
+            const ny = (y - center[1]) / radius;
+            const nz = (z - center[2]) / radius;
+            const lightDir = [0.4, 0.8, 0.5];
+            const dot = Math.max(0, nx * lightDir[0] + ny * lightDir[1] + nz * lightDir[2]);
+            const shade = 0.6 + 0.4 * dot;
+
+            colorsArr[i3]     = meteorColor.r * shade;
+            colorsArr[i3 + 1] = meteorColor.g * shade;
+            colorsArr[i3 + 2] = meteorColor.b * shade;
+        }
+
+        const tailCount = Math.floor(PARTICLE_COUNT * 0.20);
+        fillCapsuleRegion(
+            [center[0] - 3.5, center[1] + 1.0, 0],
+            [center[0],       center[1],       0],
+            0.6,
+            tailCount,
+            positionsArr, colorsArr, tailColor, iRef
+        );
+
+        fillResidualAsCloud(positionsArr, colorsArr, new THREE.Color(0x22263f), iRef, PARTICLE_COUNT, 8);
+
+        targets.meteor.positions = positionsArr;
+        targets.meteor.colors = colorsArr;
+    }
+
+    function createImpactTargets() {
+        const positionsArr = new Float32Array(PARTICLE_COUNT * 3);
+        const colorsArr = new Float32Array(PARTICLE_COUNT * 3);
+        const iRef = { value: 0 };
+
+        const fireColor = COLORS.fireCore;
+        const ashColor  = COLORS.ash;
+
+        const center = [0, -1.0, 0];
+
+        const coreCount = Math.floor(PARTICLE_COUNT * 0.20);
+        const coreRadius = 1.2;
+        for (let i = 0; i < coreCount; i++) {
+            const i3 = iRef.value * 3;
+            iRef.value++;
+
+            const u = Math.random();
+            const v = Math.random();
+            const theta = 2 * Math.PI * u;
+            const phi = Math.acos(2 * v - 1);
+            const r = coreRadius * Math.random();
+
+            const x = center[0] + r * Math.sin(phi) * Math.cos(theta);
+            const y = center[1] + r * Math.sin(phi) * Math.sin(theta);
+            const z = center[2] + r * Math.cos(phi);
+
+            positionsArr[i3]     = x;
+            positionsArr[i3 + 1] = y;
+            positionsArr[i3 + 2] = z;
+
+            const heat = 0.7 + 0.3 * Math.random();
+            colorsArr[i3]     = fireColor.r * heat;
+            colorsArr[i3 + 1] = fireColor.g * heat;
+            colorsArr[i3 + 2] = fireColor.b * heat;
+        }
+
+        const ringCount = Math.floor(PARTICLE_COUNT * 0.25);
+        const ringRadius = 4.0;
+        for (let i = 0; i < ringCount; i++) {
+            const i3 = iRef.value * 3;
+            iRef.value++;
+
+            const angle = Math.random() * Math.PI * 2;
+            const r = ringRadius * (0.9 + 0.2 * Math.random());
+
+            const x = r * Math.cos(angle);
+            const z = r * Math.sin(angle);
+            const y = center[1] - 0.3 + 0.1 * (Math.random() - 0.5);
+
+            positionsArr[i3]     = x;
+            positionsArr[i3 + 1] = y;
+            positionsArr[i3 + 2] = z;
+
+            const shade = 0.6 + 0.2 * Math.random();
+            colorsArr[i3]     = ashColor.r * shade;
+            colorsArr[i3 + 1] = ashColor.g * shade;
+            colorsArr[i3 + 2] = ashColor.b * shade;
+        }
+
+        fillCapsuleRegion(
+            [0, center[1], 0],
+            [0, center[1] + 5.0, 0],
+            1.2,
+            Math.floor(PARTICLE_COUNT * 0.25),
+            positionsArr, colorsArr, ashColor, iRef
+        );
+
+        fillResidualAsCloud(positionsArr, colorsArr, ashColor, iRef, PARTICLE_COUNT, 9);
+
+        targets.impact.positions = positionsArr;
+        targets.impact.colors = colorsArr;
+    }
+
+    function createAshWinterTargets() {
+        const positionsArr = new Float32Array(PARTICLE_COUNT * 3);
+        const colorsArr = new Float32Array(PARTICLE_COUNT * 3);
+        const iRef = { value: 0 };
+
+        const skyColor  = COLORS.skyAsh;
+        const ashColor  = COLORS.ash;
+        const groundY = -2.0;
+
+        fillCapsuleRegion(
+            [-6, groundY, -3],
+            [ 6, groundY + 1.0, 3],
+            1.5,
+            Math.floor(PARTICLE_COUNT * 0.40),
+            positionsArr, colorsArr, ashColor, iRef
+        );
+
+        fillCapsuleRegion(
+            [-8, 3.0, -4],
+            [ 8, 5.5,  4],
+            2.0,
+            Math.floor(PARTICLE_COUNT * 0.30),
+            positionsArr, colorsArr, skyColor, iRef
+        );
+
+        fillResidualAsCloud(positionsArr, colorsArr, skyColor, iRef, PARTICLE_COUNT, 10);
+
+        targets.ash.positions = positionsArr;
+        targets.ash.colors = colorsArr;
+    }
+
+    function createWorldHeartTargets() {
+        const positionsArr = new Float32Array(PARTICLE_COUNT * 3);
+        const colorsArr = new Float32Array(PARTICLE_COUNT * 3);
+        const iRef = { value: 0 };
+
+        const heartColor = COLORS.heart;
+
+        const centerX = 0;
+        const centerY = 0.5;
+        const scale = 0.15;
+
+        const count = Math.floor(PARTICLE_COUNT * 0.45);
+
+        for (let i = 0; i < count; i++) {
+            const i3 = iRef.value * 3;
+            iRef.value++;
+
+            const t = Math.random() * Math.PI * 2;
+
+            const x2 = 16 * Math.pow(Math.sin(t), 3);
+            const y2 = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+
+            const x = centerX + x2 * scale * (0.9 + 0.2 * Math.random());
+            const y = centerY + y2 * scale * (0.9 + 0.2 * Math.random());
+            const z = (Math.random() - 0.5) * 0.4;
+
+            positionsArr[i3]     = x;
+            positionsArr[i3 + 1] = y;
+            positionsArr[i3 + 2] = z;
+
+            const shade = 0.7 + 0.3 * Math.random();
+            colorsArr[i3]     = heartColor.r * shade;
+            colorsArr[i3 + 1] = heartColor.g * shade;
+            colorsArr[i3 + 2] = heartColor.b * shade;
+        }
+
+        fillResidualAsCloud(positionsArr, colorsArr, new THREE.Color(0x19050a), iRef, PARTICLE_COUNT, 5);
+
+        targets.heart.positions = positionsArr;
+        targets.heart.colors = colorsArr;
+    }
+
+    function createRenewalTreeTargets() {
+        const positionsArr = new Float32Array(PARTICLE_COUNT * 3);
+        const colorsArr = new Float32Array(PARTICLE_COUNT * 3);
+        const iRef = { value: 0 };
+
+        const trunkColor = COLORS.trunk;
+        const leafColor  = COLORS.leaf;
+
+        const groundY = -2.0;
+
+        fillCapsuleRegion(
+            [0, groundY, 0],
+            [0, groundY + 3.0, 0],
+            0.25,
+            Math.floor(PARTICLE_COUNT * 0.18),
+            positionsArr, colorsArr, trunkColor, iRef
+        );
+
+        fillCapsuleRegion(
+            [0, groundY + 2.0, 0],
+            [-1.3, groundY + 3.5, 0],
+            0.2,
+            Math.floor(PARTICLE_COUNT * 0.10),
+            positionsArr, colorsArr, trunkColor, iRef
+        );
+        fillCapsuleRegion(
+            [0, groundY + 2.0, 0],
+            [1.3, groundY + 3.5, 0],
+            0.2,
+            Math.floor(PARTICLE_COUNT * 0.10),
+            positionsArr, colorsArr, trunkColor, iRef
+        );
+
+        fillCapsuleRegion(
+            [-1.3, groundY + 3.5, 0],
+            [-1.3, groundY + 3.5, 0],
+            0.8,
+            Math.floor(PARTICLE_COUNT * 0.18),
+            positionsArr, colorsArr, leafColor, iRef
+        );
+        fillCapsuleRegion(
+            [1.3, groundY + 3.5, 0],
+            [1.3, groundY + 3.5, 0],
+            0.8,
+            Math.floor(PARTICLE_COUNT * 0.18),
+            positionsArr, colorsArr, leafColor, iRef
+        );
+
+        fillResidualAsCloud(positionsArr, colorsArr, new THREE.Color(0x163b24), iRef, PARTICLE_COUNT, 7);
+
+        targets.tree.positions = positionsArr;
+        targets.tree.colors = colorsArr;
+    }
+
+    function createConstellationTargets() {
+        const positionsArr = new Float32Array(PARTICLE_COUNT * 3);
+        const colorsArr = new Float32Array(PARTICLE_COUNT * 3);
+        const iRef = { value: 0 };
+
+        const starColor = COLORS.star;
+
+        const centers = [
+            [-3.0,  2.0, -1.0],
+            [-1.0,  1.0,  1.0],
+            [ 1.5,  2.5, -0.5],
+            [ 3.0,  1.0,  1.5],
+            [ 0.0,  3.5,  0.0],
+        ];
+
+        const perCluster = Math.floor(PARTICLE_COUNT * 0.12);
+
+        centers.forEach(center => {
+            for (let i = 0; i < perCluster; i++) {
+                const i3 = iRef.value * 3;
+                iRef.value++;
+
+                const r = 0.4 * Math.cbrt(Math.random());
+                const u = Math.random();
+                const v = Math.random();
+                const theta = 2 * Math.PI * u;
+                const phi = Math.acos(2 * v - 1);
+
+                const x = center[0] + r * Math.sin(phi) * Math.cos(theta);
+                const y = center[1] + r * Math.sin(phi) * Math.sin(theta);
+                const z = center[2] + r * Math.cos(phi);
+
+                positionsArr[i3]     = x;
+                positionsArr[i3 + 1] = y;
+                positionsArr[i3 + 2] = z;
+
+                const twinkle = 0.7 + 0.3 * Math.random();
+                colorsArr[i3]     = starColor.r * twinkle;
+                colorsArr[i3 + 1] = starColor.g * twinkle;
+                colorsArr[i3 + 2] = starColor.b * twinkle;
+            }
+        });
+
+        fillResidualAsCloud(positionsArr, colorsArr, new THREE.Color(0x25263a), iRef, PARTICLE_COUNT, 11);
+
+        targets.constellation.positions = positionsArr;
+        targets.constellation.colors = colorsArr;
+    }
+
+    // Build all shape targets once
+    createDinosaurTargets();
+    createMeteorInboundTargets();
+    createImpactTargets();
+    createAshWinterTargets();
+    createWorldHeartTargets();
+    createRenewalTreeTargets();
+    createConstellationTargets();
+
+    // --- Gesture & Hands Logic ---
+
+    function isFingerExtended(landmarks, tipIndex, pipIndex) {
+        const wrist = landmarks[0];
+        const tip = landmarks[tipIndex];
+        const pip = landmarks[pipIndex];
+
+        const tipDist = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
+        const pipDist = Math.hypot(pip.x - wrist.x, pip.y - wrist.y);
+        return tipDist > pipDist;
+    }
+
+    function getFingerStates(landmarks) {
+        return {
+            thumb:  isFingerExtended(landmarks, 4, 3),
+            index:  isFingerExtended(landmarks, 8, 6),
+            middle: isFingerExtended(landmarks, 12,10),
+            ring:   isFingerExtended(landmarks, 16,14),
+            pinky:  isFingerExtended(landmarks, 20,18)
+        };
+    }
+
+    function determineGesture(landmarks) {
+        const { thumb, index, middle, ring, pinky } = getFingerStates(landmarks);
+        const extendedCount = [thumb, index, middle, ring, pinky].filter(Boolean).length;
+
+        // Order: specific patterns first
+
+        // IMPACT: fist
+        if (!thumb && !index && !middle && !ring && !pinky) {
+            return MODES.IMPACT;
+        }
+
+        // WORLD HEART: L shape (thumb + index)
+        if (thumb && index && !middle && !ring && !pinky) {
+            return MODES.HEART;
+        }
+
+        // METEOR: peace sign (index + middle)
+        if (!thumb && index && middle && !ring && !pinky) {
+            return MODES.METEOR;
+        }
+
+        // ASH: three fingers (index + middle + ring)
+        if (!thumb && index && middle && ring && !pinky) {
+            return MODES.ASH;
+        }
+
+        // TREE: rock sign (index + pinky)
+        if (!thumb && index && !middle && !ring && pinky) {
+            return MODES.TREE;
+        }
+
+        // CONSTELLATION: index only
+        if (!thumb && index && !middle && !ring && !pinky) {
+            return MODES.CONSTELLATION;
+        }
+
+        // DINOSAUR: open hand (4+ fingers)
+        if (extendedCount >= 4) {
+            return MODES.DINOSAUR;
+        }
+
+        // Else: no change
+        return currentShape;
+    }
+
+    function calculateTension(landmarks) {
+        const wrist = landmarks[0];
+        const tips = [8, 12, 16, 20];
+        let avgDist = 0;
+
+        tips.forEach(i => {
+            const p = landmarks[i];
+            avgDist += Math.hypot(p.x - wrist.x, p.y - wrist.y);
+        });
+        avgDist /= tips.length;
+
+        const minDist = 0.15;
+        const maxDist = 0.4;
+        const t = 1 - (avgDist - minDist) / (maxDist - minDist);
+        return Math.min(1, Math.max(0, t));
+    }
+
+    function updateHUD() {
+        document.querySelectorAll('.instruction').forEach(el => el.classList.remove('active-state'));
+
+        let stateId = null;
+        switch (currentShape) {
+            case MODES.DINOSAUR:      stateId = 'state-dinosaur'; break;
+            case MODES.METEOR:        stateId = 'state-meteor'; break;
+            case MODES.IMPACT:        stateId = 'state-impact'; break;
+            case MODES.ASH:           stateId = 'state-ash'; break;
+            case MODES.HEART:         stateId = 'state-heart'; break;
+            case MODES.TREE:          stateId = 'state-tree'; break;
+            case MODES.CONSTELLATION: stateId = 'state-constellation'; break;
+            default: break;
+        }
+        if (stateId) {
+            const el = document.getElementById(stateId);
+            if (el) el.classList.add('active-state');
+        }
+    }
+
+    function getCurrentTargets() {
+        switch (currentShape) {
+            case MODES.DINOSAUR:      return targets.dinosaur;
+            case MODES.METEOR:        return targets.meteor;
+            case MODES.IMPACT:        return targets.impact;
+            case MODES.ASH:           return targets.ash;
+            case MODES.HEART:         return targets.heart;
+            case MODES.TREE:          return targets.tree;
+            case MODES.CONSTELLATION: return targets.constellation;
+            case MODES.STATIC:
+            default:
+                return null;
+        }
+    }
+
+    function onResults(results) {
+        let rightHandDetected = false;
+
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                const label = results.multiHandedness[i].label;
+                const landmarks = results.multiHandLandmarks[i];
+
+                if (label === 'Left') {
+                    const shape = determineGesture(landmarks);
+                    if (shape !== currentShape) {
+                        currentShape = shape;
+                        updateHUD();
+                    }
+                } else if (label === 'Right') {
+                    rightHandDetected = true;
+                    const tension = calculateTension(landmarks);
+                    condensationLevel += (tension - condensationLevel) * 0.15;
+                    document.getElementById('tension-bar').style.width = `${condensationLevel * 100}%`;
+                }
+            }
+        }
+
+        if (!rightHandDetected) {
+            condensationLevel *= 0.95;
+            document.getElementById('tension-bar').style.width = `${condensationLevel * 100}%`;
+        }
+    }
+
+    const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
     hands.setOptions({
         maxNumHands: 2,
         modelComplexity: 1,
         minDetectionConfidence: 0.5,
         minTrackingConfidence: 0.5
     });
-
     hands.onResults(onResults);
 
+    const videoElement = document.getElementById('input-video');
     const cameraUtils = new Camera(videoElement, {
         onFrame: async () => {
-            await hands.send({image: videoElement});
+            await hands.send({ image: videoElement });
         },
         width: 640,
         height: 480
     });
-
-    cameraUtils.start()
-        .then(() => {
-            document.getElementById('loading').style.display = 'none';
-        })
-        .catch(err => {
-            document.getElementById('loading').innerText = "Camera Access Denied";
-            console.error(err);
-        });
+    cameraUtils.start().then(() => {
+        document.getElementById('loading').style.display = 'none';
+    });
 
     // --- Animation Loop ---
-
+    let time = 0;
     function animate() {
         requestAnimationFrame(animate);
-        
         time += 0.01;
 
-        // Smooth tension value
-        handTension += (targetTension - handTension) * 0.1;
+        const target = getCurrentTargets();
+        const hasShape = !!target;
 
-        // Update UI
-        const bar = document.getElementById('tension-bar');
-        bar.style.width = `${handTension * 100}%`;
-        
-        // Color transition
-        const currentR = THREE.MathUtils.lerp(color1.r, color2.r, handTension);
-        const currentG = THREE.MathUtils.lerp(color1.g, color2.g, handTension);
-        const currentB = THREE.MathUtils.lerp(color1.b, color2.b, handTension);
-        bar.style.background = `rgb(${currentR*255}, ${currentG*255}, ${currentB*255})`;
+        const chaos = chaosPositions;
+        const posArr = geometry.attributes.position.array;
+        const colArr = geometry.attributes.color.array;
 
-        const positionsArray = geometry.attributes.position.array;
-        const colorsArray = geometry.attributes.color.array;
-
-        // Define state parameters based on tension
-        // Low Tension: High noise, large spread, blue
-        // High Tension: Low noise, tight form, red
-        
-        const noiseAmplitude = THREE.MathUtils.lerp(2.0, 0.05, handTension); 
-        const formStrength = THREE.MathUtils.lerp(0.01, 0.15, handTension); // How strongly they snap to target
-
-        // Rotate the whole system slowly
-        particles.rotation.y = Math.sin(time * 0.2) * 0.2;
+        const targetPos = hasShape ? target.positions : chaos;
+        const targetCol = hasShape ? target.colors : null;
 
         for (let i = 0; i < PARTICLE_COUNT; i++) {
-            const ix = i * 3;
-            const iy = i * 3 + 1;
-            const iz = i * 3 + 2;
+            const i3 = i * 3;
 
-            // Target coords
-            const tx = targetPositions[ix];
-            const ty = targetPositions[iy];
-            const tz = targetPositions[iz];
+            const cx = chaos[i3];
+            const cy = chaos[i3 + 1];
+            const cz = chaos[i3 + 2];
 
-            // Current coords
-            let cx = positionsArray[ix];
-            let cy = positionsArray[iy];
-            let cz = positionsArray[iz];
+            const sx = targetPos[i3];
+            const sy = targetPos[i3 + 1];
+            const sz = targetPos[i3 + 2];
 
-            // 1. Attraction Force (Move towards body shape)
-            // If tension is high, move fast. If low, move slow or drift away.
-            const dx = tx - cx;
-            const dy = ty - cy;
-            const dz = tz - cz;
+            const tLevel = hasShape ? condensationLevel : 0.0;
 
-            // Apply movement
-            if (handTension > 0.1) {
-                // Moving towards organ structure
-                cx += dx * formStrength;
-                cy += dy * formStrength;
-                cz += dz * formStrength;
+            const tx = cx + (sx - cx) * tLevel;
+            const ty = cy + (sy - cy) * tLevel;
+            const tz = cz + (sz - cz) * tLevel;
+
+            const speed = 0.08 * randoms[i];
+
+            posArr[i3]     += (tx - posArr[i3]) * speed;
+            posArr[i3 + 1] += (ty - posArr[i3 + 1]) * speed;
+            posArr[i3 + 2] += (tz - posArr[i3 + 2]) * speed;
+
+            if (hasShape) {
+                colArr[i3]     += (targetCol[i3]     - colArr[i3])     * 0.08;
+                colArr[i3 + 1] += (targetCol[i3 + 1] - colArr[i3 + 1]) * 0.08;
+                colArr[i3 + 2] += (targetCol[i3 + 2] - colArr[i3 + 2]) * 0.08;
             } else {
-                // Cellular drift (Brownian motion-ish around target but looser)
-                // Add a "Breathing" expansion effect when hands are open
-                const driftX = Math.sin(time + randomness[ix] * 10) * 0.02;
-                const driftY = Math.cos(time + randomness[iy] * 10) * 0.02;
-                
-                // Explode outwards slightly based on randomness center
-                cx += driftX + (cx * 0.01); 
-                cy += driftY + (cy * 0.01);
-                cz += (dz * 0.01); // Slowly return to Z plane
+                const neutral = 0.35;
+                colArr[i3]     += (neutral - colArr[i3])     * 0.02;
+                colArr[i3 + 1] += (neutral - colArr[i3 + 1]) * 0.02;
+                colArr[i3 + 2] += (neutral - colArr[i3 + 2]) * 0.02;
             }
-
-            // 2. Add Noise/Jitter (Living cell movement vs Solid tissue)
-            cx += (Math.random() - 0.5) * noiseAmplitude * 0.1;
-            cy += (Math.random() - 0.5) * noiseAmplitude * 0.1;
-            cz += (Math.random() - 0.5) * noiseAmplitude * 0.1;
-
-            // 3. Update Position
-            positionsArray[ix] = cx;
-            positionsArray[iy] = cy;
-            positionsArray[iz] = cz;
-
-            // 4. Update Color
-            // Lerp per particle for organic feel
-            colorsArray[ix] = currentR + (Math.random() * 0.1 * handTension);
-            colorsArray[iy] = currentG;
-            colorsArray[iz] = currentB;
         }
 
         geometry.attributes.position.needsUpdate = true;
         geometry.attributes.color.needsUpdate = true;
 
+        scene.rotation.y = time * 0.04;
+
         renderer.render(scene, camera);
     }
 
-    // Handle Resize
+    animate();
+
     window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
     });
-
-    animate();
-
 </script>
+
 </body>
 </html>
