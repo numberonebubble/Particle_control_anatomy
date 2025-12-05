@@ -223,7 +223,7 @@
             
             <div class="controls-hint">
                 Open hand: Field dispersed<br>
-                Closed fist: Heart locks &amp; PPG from fist + forehead
+                Closed fist: Heart locks &amp; PPG from forehead only
             </div>
         </div>
     </div>
@@ -233,7 +233,7 @@
         <div class="glass-panel hr-panel">
             <div class="hr-label">Heart Rate</div>
             <div id="hr-value">--</div>
-            <div class="hr-sub">PPG (fist + forehead)</div>
+            <div class="hr-sub">PPG (forehead)</div>
         </div>
     </div>
 
@@ -431,11 +431,10 @@
         }
     }
 
-    // --- HANDS: tension + fist PPG ROI ---
+    // --- HANDS: tension & gating (no PPG from fist now) ---
     function onResultsHands(results) {
         const nowSec = performance.now() / 1000;
 
-        // Draw base frame
         previewCtx.save();
         previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
         previewCtx.drawImage(results.image, 0, 0, previewCanvas.width, previewCanvas.height);
@@ -487,52 +486,6 @@
                 ppgSamples = [];
                 hrBPM = 0;
                 document.getElementById('hr-value').textContent = "--";
-            }
-
-            // If fist clenched, use bounding box around FIRST hand as PPG ROI
-            if (hrActive) {
-                const firstHand = results.multiHandLandmarks[0];
-
-                // Bounding box over all landmarks (normalized coords 0–1)
-                let minX = 1, minY = 1, maxX = 0, maxY = 0;
-                for (const lm of firstHand) {
-                    if (lm.x < minX) minX = lm.x;
-                    if (lm.x > maxX) maxX = lm.x;
-                    if (lm.y < minY) minY = lm.y;
-                    if (lm.y > maxY) maxY = lm.y;
-                }
-
-                const margin = 0.05;
-                minX = Math.max(0, minX - margin);
-                maxX = Math.min(1, maxX + margin);
-                minY = Math.max(0, minY - margin);
-                maxY = Math.min(1, maxY + margin);
-
-                let x0 = Math.floor(minX * previewCanvas.width);
-                let y0 = Math.floor(minY * previewCanvas.height);
-                let w  = Math.floor((maxX - minX) * previewCanvas.width);
-                let h  = Math.floor((maxY - minY) * previewCanvas.height);
-
-                w = Math.max(4, Math.min(previewCanvas.width  - x0, w));
-                h = Math.max(4, Math.min(previewCanvas.height - y0, h));
-
-                const imgData = previewCtx.getImageData(x0, y0, w, h);
-                const data = imgData.data;
-
-                let sumG = 0, count = 0;
-                for (let i = 0; i < data.length; i += 4) {
-                    sumG += data[i + 1]; // green channel
-                    count++;
-                }
-                if (count > 0) {
-                    const avgG = sumG / count;
-                    addPPGSample(avgG, nowSec);
-                }
-
-                // Draw fist ROI
-                previewCtx.strokeStyle = '#00FFFF';
-                previewCtx.lineWidth = 2;
-                previewCtx.strokeRect(x0, y0, w, h);
             }
 
         } else {
