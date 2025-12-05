@@ -13,6 +13,8 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <!-- MediaPipe FaceMesh -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 
     <style>
         body {
@@ -176,7 +178,7 @@
         }
 
         .hr-panel {
-            min-width: 160px;
+            min-width: 200px;
             text-align: right;
         }
 
@@ -221,7 +223,7 @@
             
             <div class="controls-hint">
                 Open hand: Field dispersed<br>
-                Closed fist: Classic heart &amp; PPG from full fist
+                Closed fist: Heart locks &amp; PPG from fist + forehead
             </div>
         </div>
     </div>
@@ -231,7 +233,7 @@
         <div class="glass-panel hr-panel">
             <div class="hr-label">Heart Rate</div>
             <div id="hr-value">--</div>
-            <div class="hr-sub">PPG (closed fist)</div>
+            <div class="hr-sub">PPG (fist + forehead)</div>
         </div>
     </div>
 
@@ -315,7 +317,6 @@
             const f = a * a * a - x * x * y * y * y;
 
             if (f <= 0) {
-                // Scale & shift to sit nicely in frame
                 return {
                     x: x * 1.5,
                     y: y * 1.5,
@@ -372,9 +373,7 @@
     });
 
     const particles = new THREE.Points(geometry, material);
-    // Slight tilt for a more dynamic view
     particles.rotation.x = -0.2;
-    particles.rotation.z = 0.0;
     scene.add(particles);
 
     // --- MediaPipe + Webcam ---
@@ -384,6 +383,18 @@
 
     previewCanvas.width = 320;
     previewCanvas.height = 240;
+
+    // PPG aggregator
+    function addPPGSample(avgG, nowSec) {
+        ppgSamples.push({ t: nowSec, v: avgG });
+        while (ppgSamples.length > 0 && (nowSec - ppgSamples[0].t) > PPG_WINDOW_SEC) {
+            ppgSamples.shift();
+        }
+        if (nowSec - lastHRComputeTime > 1.0) {
+            computeHeartRateFromPPG(nowSec);
+            lastHRComputeTime = nowSec;
+        }
+    }
 
     function computeHeartRateFromPPG(nowSec) {
         if (ppgSamples.length < 2) return;
@@ -420,12 +431,15 @@
         }
     }
 
-    function onResults(results) {
+    // --- HANDS: tension + fist PPG ROI ---
+    function onResultsHands(results) {
+        const nowSec = performance.now() / 1000;
+
+        // Draw base frame
         previewCtx.save();
         previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
         previewCtx.drawImage(results.image, 0, 0, previewCanvas.width, previewCanvas.height);
 
-        const nowSec = performance.now() / 1000;
         handPresence = false;
 
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
@@ -475,7 +489,7 @@
                 document.getElementById('hr-value').textContent = "--";
             }
 
-            // If fist clenched, run PPG using entire fist (bounding box of hand)
+            // If fist clenched, use bounding box around FIRST hand as PPG ROI
             if (hrActive) {
                 const firstHand = results.multiHandLandmarks[0];
 
@@ -512,17 +526,10 @@
                 }
                 if (count > 0) {
                     const avgG = sumG / count;
-                    ppgSamples.push({ t: nowSec, v: avgG });
-                    while (ppgSamples.length > 0 && (nowSec - ppgSamples[0].t) > PPG_WINDOW_SEC) {
-                        ppgSamples.shift();
-                    }
-                    if (nowSec - lastHRComputeTime > 1.0) {
-                        computeHeartRateFromPPG(nowSec);
-                        lastHRComputeTime = nowSec;
-                    }
+                    addPPGSample(avgG, nowSec);
                 }
 
-                // Visualize PPG ROI
+                // Draw fist ROI
                 previewCtx.strokeStyle = '#00FFFF';
                 previewCtx.lineWidth = 2;
                 previewCtx.strokeRect(x0, y0, w, h);
@@ -541,6 +548,74 @@
         previewCtx.restore();
     }
 
+    // --- FACE: forehead PPG ROI (only when hrActive) ---
+    function onResultsFace(results) {
+        if (!hrActive) return; // only care when fist is clenched
+
+        const nowSec = performance.now() / 1000;
+
+        if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
+            return;
+        }
+
+        const landmarks = results.multiFaceLandmarks[0];
+
+        // Compute face bounding box
+        let minX = 1, minY = 1, maxX = 0, maxY = 0;
+        for (const lm of landmarks) {
+            if (lm.x < minX) minX = lm.x;
+            if (lm.x > maxX) maxX = lm.x;
+            if (lm.y < minY) minY = lm.y;
+            if (lm.y > maxY) maxY = lm.y;
+        }
+
+        const faceWidth  = maxX - minX;
+        const faceHeight = maxY - minY;
+        const centerX = (minX + maxX) / 2;
+
+        // Forehead: upper chunk of the face bounding box
+        const foreheadHeightNorm = faceHeight * 0.25;
+        const foreheadWidthNorm  = faceWidth  * 0.5;
+
+        const foreheadMinX = centerX - foreheadWidthNorm / 2;
+        const foreheadMaxX = centerX + foreheadWidthNorm / 2;
+        const foreheadMinY = minY; // near top of face
+        const foreheadMaxY = minY + foreheadHeightNorm;
+
+        let x0 = Math.floor(Math.max(0, foreheadMinX) * previewCanvas.width);
+        let y0 = Math.floor(Math.max(0, foreheadMinY) * previewCanvas.height);
+        let w  = Math.floor(Math.min(1, foreheadMaxX) * previewCanvas.width  - x0);
+        let h  = Math.floor(Math.min(1, foreheadMaxY) * previewCanvas.height - y0);
+
+        w = Math.max(4, Math.min(previewCanvas.width  - x0, w));
+        h = Math.max(4, Math.min(previewCanvas.height - y0, h));
+
+        if (w <= 0 || h <= 0) return;
+
+        // Grab PPG from forehead region
+        const imgData = previewCtx.getImageData(x0, y0, w, h);
+        const data = imgData.data;
+
+        let sumG = 0, count = 0;
+        for (let i = 0; i < data.length; i += 4) {
+            sumG += data[i + 1];
+            count++;
+        }
+        if (count > 0) {
+            const avgG = sumG / count;
+            addPPGSample(avgG, nowSec);
+        }
+
+        // Draw forehead ROI on top
+        previewCtx.save();
+        previewCtx.strokeStyle = '#FF00FF';
+        previewCtx.lineWidth = 2;
+        previewCtx.strokeRect(x0, y0, w, h);
+        previewCtx.restore();
+    }
+
+    // --- Set up MediaPipe Hands & FaceMesh ---
+
     const hands = new Hands({locateFile: (file) => {
         return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
     }});
@@ -551,12 +626,25 @@
         minDetectionConfidence: 0.5,
         minTrackingConfidence: 0.5
     });
+    hands.onResults(onResultsHands);
 
-    hands.onResults(onResults);
+    const faceMesh = new FaceMesh({locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+    }});
+
+    faceMesh.setOptions({
+        maxNumFaces: 1,
+        refineLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+    faceMesh.onResults(onResultsFace);
 
     const cameraUtils = new Camera(videoElement, {
         onFrame: async () => {
-            await hands.send({ image: videoElement });
+            const image = videoElement;
+            await hands.send({ image });
+            await faceMesh.send({ image });
         },
         width: 640,
         height: 480
