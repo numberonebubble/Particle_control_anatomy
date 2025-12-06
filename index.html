@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Anatomical Bio-Metric Interface</title>
+    <title>Immersive Particle World</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     
@@ -12,92 +12,115 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
     <style>
-        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', monospace; color: white; }
-        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; color: white; }
         
-        /* Mirror the video input for natural feel */
+        /* Mirror video for natural interaction */
         #input-video { position: absolute; opacity: 0; pointer-events: none; transform: scaleX(-1); }
         
-        #ui-layer {
-            position: absolute; top: 20px; left: 20px; z-index: 10;
-            display: flex; flex-direction: column; gap: 10px; pointer-events: none;
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+
+        /* HUD - Left Side */
+        #hud {
+            position: absolute; top: 0; left: 0; bottom: 0; width: 300px;
+            background: linear-gradient(90deg, rgba(0,10,20,0.9), rgba(0,0,0,0));
+            z-index: 10; padding: 40px 20px;
+            display: flex; flex-direction: column; justify-content: center; gap: 30px;
+            pointer-events: none;
         }
 
-        .glass-panel {
-            background: rgba(10, 15, 20, 0.8);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            padding: 24px;
-            border-radius: 16px;
-            width: 340px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+        h1 { 
+            font-size: 1.5rem; text-transform: uppercase; letter-spacing: 4px; 
+            color: #fff; text-shadow: 0 0 10px #00d2ff; margin-bottom: 20px; 
+            border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom: 10px;
         }
 
-        h1 { margin: 0 0 20px 0; font-size: 0.9rem; letter-spacing: 3px; text-transform: uppercase; color: #88ccff; border-bottom: 1px solid #334; padding-bottom: 10px; }
-        
-        .hand-label { font-size: 0.7rem; color: #667; margin-bottom: 8px; font-weight: 700; text-transform: uppercase; display: flex; justify-content: space-between; }
-        
-        .instruction { 
-            font-size: 0.85rem; color: #889; margin-bottom: 8px; 
-            display: flex; align-items: center; gap: 12px; 
-            padding: 6px 10px; border-radius: 6px;
+        .control-group { margin-bottom: 20px; }
+        .group-label { font-size: 0.8rem; color: #8899aa; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; }
+
+        .gesture-item {
+            display: flex; align-items: center; gap: 15px;
+            padding: 12px; margin-bottom: 8px;
+            border-left: 2px solid rgba(255,255,255,0.1);
+            background: rgba(255,255,255,0.02);
             transition: all 0.3s ease;
         }
-        
-        .icon-box { width: 18px; height: 18px; border: 1px solid #445; display: flex; align-items: center; justify-content: center; border-radius: 4px; font-size: 10px; }
 
-        .active-state { background: rgba(255,255,255,0.1); color: white; border-left: 3px solid #00d2ff; }
-        .active-state b { color: #00d2ff; }
+        .gesture-item.active {
+            border-left: 4px solid #00d2ff;
+            background: linear-gradient(90deg, rgba(0, 210, 255, 0.2), transparent);
+            text-shadow: 0 0 8px rgba(0, 210, 255, 0.8);
+        }
 
-        /* Metric Bar */
-        .bar-track { width: 100%; height: 4px; background: #223; border-radius: 2px; overflow: hidden; margin-top: 10px; }
-        .bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #00d2ff, #fff); transition: width 0.1s; }
+        .icon { font-size: 1.5rem; width: 30px; text-align: center; }
+        .desc { font-size: 0.9rem; font-weight: bold; }
+        .sub { font-size: 0.7rem; color: #aaa; display: block; }
+
+        /* Power Bar */
+        #power-container {
+            width: 100%; height: 8px; background: #222; border-radius: 4px; overflow: hidden;
+        }
+        #power-fill {
+            height: 100%; width: 0%; background: #00d2ff;
+            box-shadow: 0 0 15px #00d2ff; transition: width 0.1s;
+        }
 
         #loading {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: white; z-index: 20; font-size: 1.5rem; letter-spacing: 3px; animation: pulse 1.5s infinite;
+            font-size: 2rem; letter-spacing: 5px; animation: pulse 1s infinite; z-index: 100;
         }
-        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+        @keyframes pulse { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
     </style>
 </head>
 <body>
 
-    <div id="loading">GENERATING ANATOMY...</div>
+    <div id="loading">INITIALIZING WORLD...</div>
 
-    <div id="ui-layer">
-        <div class="glass-panel">
-            <h1>Bio-Metric Scanner</h1>
+    <div id="hud">
+        <div>
+            <h1>Particle<br>Engine</h1>
             
-            <div style="margin-bottom: 25px;">
-                <div class="hand-label">
-                    <span>Left Hand</span>
-                    <span>SHAPE SELECTOR</span>
+            <div class="control-group">
+                <div class="group-label">Left Hand (Energy)</div>
+                <div class="gesture-item" id="state-power">
+                    <div class="icon">✊</div>
+                    <div>
+                        <span class="desc">CLOSE FIST</span>
+                        <span class="sub">Condense Matter</span>
+                    </div>
                 </div>
-                <div id="state-patient" class="instruction">
-                    <div class="icon-box">✋</div> <span>Open: <b>PATIENT</b></span>
-                </div>
-                <div id="state-medic" class="instruction">
-                    <div class="icon-box">✊</div> <span>Fist: <b>MEDIC</b></span>
-                </div>
-                <div id="state-balloon" class="instruction">
-                    <div class="icon-box">☝️</div> <span>Point: <b>BALLOON</b></span>
+                <div style="margin-top:10px;">
+                    <div class="group-label">Cohesion Level</div>
+                    <div id="power-container"><div id="power-fill"></div></div>
                 </div>
             </div>
 
-            <div>
-                <div class="hand-label">
-                    <span>Right Hand</span>
-                    <span>MATTER CONDENSER</span>
+            <div class="control-group">
+                <div class="group-label">Right Hand (Shape)</div>
+                
+                <div class="gesture-item active" id="btn-patient">
+                    <div class="icon">✋</div>
+                    <div>
+                        <span class="desc">PATIENT</span>
+                        <span class="sub">Open Hand</span>
+                    </div>
                 </div>
-                <div class="instruction" style="justify-content: space-between; background:none; padding:0;">
-                    <span style="font-size:0.7rem">SCATTER</span>
-                    <span style="font-size:0.7rem">CONDENSE</span>
+
+                <div class="gesture-item" id="btn-medic">
+                    <div class="icon">☝️</div>
+                    <div>
+                        <span class="desc">MEDIC</span>
+                        <span class="sub">Point Finger</span>
+                    </div>
                 </div>
-                <div class="bar-track">
-                    <div id="tension-bar" class="bar-fill"></div>
+
+                <div class="gesture-item" id="btn-amb">
+                    <div class="icon">✊</div>
+                    <div>
+                        <span class="desc">AMBULANCE</span>
+                        <span class="sub">Closed Fist</span>
+                    </div>
                 </div>
             </div>
-            
         </div>
     </div>
 
@@ -105,32 +128,29 @@
     <video id="input-video" playsinline></video>
 
 <script>
-    // --- Configuration ---
-    const PARTICLE_COUNT = 24000; // Increased for better anatomical density
+    // --- Constants ---
+    const PARTICLE_COUNT = 25000;
     
-    // --- State Management ---
-    const MODES = { PATIENT: 'patient', MEDIC: 'medic', BALLOON: 'balloon' };
+    // --- State ---
+    const MODES = { PATIENT: 0, MEDIC: 1, AMBULANCE: 2 };
+    let currentMode = MODES.PATIENT;
+    let cohesion = 0; // 0 = Dissipated, 1 = Formed
     
-    let currentShape = MODES.PATIENT; 
-    let condensationLevel = 0; 
-    
-    // Colors
-    const COLORS = {
-        skin: new THREE.Color(0xdeb887),      // Wheat/Skin
-        scrubs: new THREE.Color(0x2E8B57),    // SeaGreen
-        balloon: new THREE.Color(0xff3333),   // Red
-        string: new THREE.Color(0xffffff)
-    };
+    // --- Colors ---
+    const C_SKIN = new THREE.Color(0xffccaa);
+    const C_BLUE = new THREE.Color(0x0088ff);
+    const C_WHITE = new THREE.Color(0xffffff);
+    const C_RED = new THREE.Color(0xff2222);
+    const C_GREY = new THREE.Color(0x555555);
 
-    let currentColor = COLORS.skin.clone();
-
-    // --- 3D Scene Setup ---
+    // --- 3D Setup ---
     const container = document.getElementById('canvas-container');
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x050505, 0.025);
+    scene.fog = new THREE.FogExp2(0x000000, 0.02);
 
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-    camera.position.set(0, 0, 12);
+    camera.position.set(0, 1, 12);
+    camera.lookAt(0, 0, 0);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -138,245 +158,294 @@
     container.appendChild(renderer.domElement);
 
     // --- Particle System ---
-    const targets = {
-        patient: new Float32Array(PARTICLE_COUNT * 3),
-        patientColors: new Float32Array(PARTICLE_COUNT * 3),
-        
-        medic: new Float32Array(PARTICLE_COUNT * 3),
-        medicColors: new Float32Array(PARTICLE_COUNT * 3),
-        
-        balloon: new Float32Array(PARTICLE_COUNT * 3),
-        balloonColors: new Float32Array(PARTICLE_COUNT * 3)
-    };
-
-    const chaosPositions = new Float32Array(PARTICLE_COUNT * 3);
     const geometry = new THREE.BufferGeometry();
+    
+    // Base State (Current positions)
     const positions = new Float32Array(PARTICLE_COUNT * 3);
     const colors = new Float32Array(PARTICLE_COUNT * 3);
-    const randoms = new Float32Array(PARTICLE_COUNT);
+    
+    // Chaos State (Where they explode to)
+    const chaosPos = new Float32Array(PARTICLE_COUNT * 3);
+    
+    // Morph Target Information: Each particle knows its destination for ALL 3 shapes
+    // This allows instant morphing without recalculating arrays
+    const targetPatient = new Float32Array(PARTICLE_COUNT * 3);
+    const colorPatient = new Float32Array(PARTICLE_COUNT * 3);
+    
+    const targetMedic = new Float32Array(PARTICLE_COUNT * 3);
+    const colorMedic = new Float32Array(PARTICLE_COUNT * 3);
+    
+    const targetAmb = new Float32Array(PARTICLE_COUNT * 3);
+    const colorAmb = new Float32Array(PARTICLE_COUNT * 3);
 
-    // --- Anatomical Generation Logic ---
+    // Metadata for animation (e.g., is this particle part of the Medic's arm?)
+    const metaData = new Float32Array(PARTICLE_COUNT); // 0=Static, 1=Arm, 2=Lights, 3=Chest
 
-    // A helper to define a body part as a capsule (line segment with radius)
-    // pA: Start [x,y,z], pB: End [x,y,z], radius, colorObject
-    function createLimbParticles(targetPosArr, targetColArr, startIndex, count, pA, pB, radius, colorObj) {
-        const vA = new THREE.Vector3(...pA);
-        const vB = new THREE.Vector3(...pB);
-        const vec = new THREE.Vector3().subVectors(vB, vA);
-        const len = vec.length();
-        
-        for (let i = 0; i < count; i++) {
-            const idx = (startIndex + i) * 3;
-            
-            // Random point along the line
-            const t = Math.random();
-            const center = new THREE.Vector3().copy(vA).add(vec.clone().multiplyScalar(t));
-            
-            // Random point in sphere at that line point (creates capsule volume)
-            // Rejection sampling for uniform sphere distribution
-            let d = new THREE.Vector3();
-            do {
-                d.set(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).normalize();
-            } while(d.length() === 0);
-            
-            // Tapering logic for nicer muscles (optional, simple radius here)
-            // Slight noise on radius for texture
-            const r = radius * Math.cbrt(Math.random()); 
-            
-            const p = center.add(d.multiplyScalar(r));
+    // --- Shape Generation Helpers ---
 
-            targetPosArr[idx] = p.x;
-            targetPosArr[idx+1] = p.y;
-            targetPosArr[idx+2] = p.z;
+    function setPoint(arr, colArr, i, x, y, z, cObj) {
+        arr[i*3] = x; arr[i*3+1] = y; arr[i*3+2] = z;
+        colArr[i*3] = cObj.r; colArr[i*3+1] = cObj.g; colArr[i*3+2] = cObj.b;
+    }
 
-            // Texture/Color variation
-            const shadow = 1 - (Math.random() * 0.3); // Fake AO
-            targetColArr[idx] = colorObj.r * shadow;
-            targetColArr[idx+1] = colorObj.g * shadow;
-            targetColArr[idx+2] = colorObj.b * shadow;
+    // Volumetric Box
+    function fillBox(arr, colArr, start, count, w, h, d, yOff, color, metaTag=0) {
+        for(let i=0; i<count; i++) {
+            const idx = start + i;
+            const x = (Math.random()-0.5) * w;
+            const y = (Math.random()-0.5) * h + yOff;
+            const z = (Math.random()-0.5) * d;
+            setPoint(arr, colArr, idx, x, y, z, color);
+            metaData[idx] = metaTag;
         }
     }
 
-    function generateAnatomy() {
-        // We divide particles among body parts based on volume approx
-        const parts = PARTICLE_COUNT;
-        
-        // 1. GENERATE PATIENT (Lying Supine on floor Y=-3)
-        // Offset: center around x=0, y=-2
-        let offset = 0;
-        
-        const pt_head = 2000; const pt_torso = 6000; const pt_arm = 2000; const pt_leg = 3000;
-        
-        // Head
-        createLimbParticles(targets.patient, targets.patientColors, offset, pt_head, [-0.5, -2, 0], [0.5, -2, 0], 0.65, COLORS.skin); offset += pt_head;
-        // Torso
-        createLimbParticles(targets.patient, targets.patientColors, offset, pt_torso, [0.6, -2, 0], [2.5, -2, 0], 0.7, COLORS.skin); offset += pt_torso;
-        // Right Arm (Flared out)
-        createLimbParticles(targets.patient, targets.patientColors, offset, pt_arm, [0.8, -2, 0.7], [2.5, -2, 1.5], 0.25, COLORS.skin); offset += pt_arm;
-        // Left Arm
-        createLimbParticles(targets.patient, targets.patientColors, offset, pt_arm, [0.8, -2, -0.7], [2.5, -2, -1.5], 0.25, COLORS.skin); offset += pt_arm;
-        // Right Leg
-        createLimbParticles(targets.patient, targets.patientColors, offset, pt_leg, [2.5, -2, 0.3], [5.0, -2, 0.4], 0.3, COLORS.skin); offset += pt_leg;
-        // Left Leg
-        createLimbParticles(targets.patient, targets.patientColors, offset, pt_leg, [2.5, -2, -0.3], [5.0, -2, -0.4], 0.3, COLORS.skin); offset += pt_leg;
-
-        // Fill remaining patient particles with noise around body
-        while(offset < PARTICLE_COUNT) {
-            targets.patient[offset*3] = (Math.random()*6)-1;
-            targets.patient[offset*3+1] = -2.5;
-            targets.patient[offset*3+2] = (Math.random()*4)-2;
-            offset++;
+    // Volumetric Sphere
+    function fillSphere(arr, colArr, start, count, rad, xOff, yOff, zOff, color, metaTag=0) {
+        for(let i=0; i<count; i++) {
+            const idx = start + i;
+            const u = Math.random(); const v = Math.random();
+            const theta = 2 * Math.PI * u; const phi = Math.acos(2 * v - 1);
+            const r = rad * Math.cbrt(Math.random());
+            const x = xOff + r * Math.sin(phi) * Math.cos(theta);
+            const y = yOff + r * Math.sin(phi) * Math.sin(theta);
+            const z = zOff + r * Math.cos(phi);
+            setPoint(arr, colArr, idx, x, y, z, color);
+            metaData[idx] = metaTag; // Use this to identify body parts
         }
-
-        // 2. GENERATE MEDIC (Kneeling/Leaning over)
-        offset = 0;
-        // Head (Leaning forward)
-        createLimbParticles(targets.medic, targets.medicColors, offset, pt_head, [-1.0, 0.5, 0], [-0.8, 0.3, 0], 0.5, COLORS.skin); offset += pt_head;
-        // Torso (Angled down)
-        createLimbParticles(targets.medic, targets.medicColors, offset, pt_torso, [-0.6, 0.2, 0], [0.5, -1.0, 0], 0.7, COLORS.scrubs); offset += pt_torso;
-        // Thighs (Kneeling vertical-ish)
-        createLimbParticles(targets.medic, targets.medicColors, offset, pt_leg, [0.5, -1.0, 0.3], [0.5, -2.5, 0.6], 0.35, COLORS.scrubs); offset += pt_leg;
-        createLimbParticles(targets.medic, targets.medicColors, offset, pt_leg, [0.5, -1.0, -0.3], [0.5, -2.5, -0.6], 0.35, COLORS.scrubs); offset += pt_leg;
-        // Arms (Reaching down towards patient chest)
-        createLimbParticles(targets.medic, targets.medicColors, offset, pt_arm, [-0.5, 0.0, 0.6], [-0.5, -1.5, 0.2], 0.2, COLORS.skin); offset += pt_arm;
-        createLimbParticles(targets.medic, targets.medicColors, offset, pt_arm, [-0.5, 0.0, -0.6], [-0.5, -1.5, -0.2], 0.2, COLORS.skin); offset += pt_arm;
-        
-        // Fill remainder
-        while(offset < PARTICLE_COUNT) { offset++; }
-
-        // 3. GENERATE BALLOON (Object + Tether)
-        offset = 0;
-        const pt_balloon = 18000; 
-        const balloonCenter = new THREE.Vector3(0, 1.5, 0);
-        
-        for(let i=0; i<pt_balloon; i++) {
-            // Sphere with specular highlight logic in color
-            const idx = (offset + i) * 3;
-            // Uniform sphere
-            const u = Math.random(), v = Math.random();
-            const theta = 2 * Math.PI * u;
-            const phi = Math.acos(2 * v - 1);
-            const r = 1.2 * Math.cbrt(Math.random()); // Radius 1.2
-            
-            const px = balloonCenter.x + r * Math.sin(phi) * Math.cos(theta);
-            const py = balloonCenter.y + r * Math.sin(phi) * Math.sin(theta);
-            const pz = balloonCenter.z + r * Math.cos(phi);
-            
-            targets.balloon[idx] = px; targets.balloon[idx+1] = py; targets.balloon[idx+2] = pz;
-            
-            // Fake Specular Highlight: if point is top-right-front, make it white
-            // Light source approx (1, 1, 1)
-            const normal = new THREE.Vector3(px - balloonCenter.x, py - balloonCenter.y, pz - balloonCenter.z).normalize();
-            const light = new THREE.Vector3(0.5, 1, 0.8).normalize();
-            const dot = Math.max(0, normal.dot(light));
-            const spec = Math.pow(dot, 20); // Shininess
-            
-            targets.balloonColors[idx] = Math.min(1, COLORS.balloon.r + spec);
-            targets.balloonColors[idx+1] = Math.min(1, COLORS.balloon.g + spec);
-            targets.balloonColors[idx+2] = Math.min(1, COLORS.balloon.b + spec);
-        }
-        offset += pt_balloon;
-
-        // String
-        const pt_string = PARTICLE_COUNT - offset;
-        createLimbParticles(targets.balloon, targets.balloonColors, offset, pt_string, [0, 1.5-1.2, 0], [0.8, -2, 0], 0.05, COLORS.string);
     }
 
-    generateAnatomy();
+    // --- Build Models ---
 
-    // Init Chaos
+    // 1. PATIENT (Lying down)
+    let offset = 0;
+    // Head
+    fillSphere(targetPatient, colorPatient, offset, 2000, 0.7, -2.5, -2, 0, C_SKIN); offset+=2000;
+    // Torso (Chest tag for breathing)
+    fillBox(targetPatient, colorPatient, offset, 8000, 3.0, 1.2, 1.5, -2, C_BLUE, 3); offset+=8000;
+    // Legs
+    fillBox(targetPatient, colorPatient, offset, 8000, 3.5, 0.8, 1.2, -2, C_WHITE); 
+    // Shift legs right
+    for(let i=offset; i<offset+8000; i++) targetPatient[i*3] += 3.5; 
+    offset+=8000;
+    // Remainder noise
+    fillBox(targetPatient, colorPatient, offset, PARTICLE_COUNT-offset, 8, 0.5, 4, -3, C_GREY);
+
+    // 2. MEDIC (Kneeling, CPR pose)
+    offset = 0;
+    // Head
+    fillSphere(targetMedic, colorMedic, offset, 2000, 0.6, 0, 1.0, 0, C_SKIN); offset+=2000;
+    // Torso
+    fillBox(targetMedic, colorMedic, offset, 6000, 1.2, 1.5, 1.0, -0.2, C_BLUE); offset+=6000;
+    // Legs (Kneeling)
+    fillBox(targetMedic, colorMedic, offset, 5000, 1.4, 1.5, 1.2, -1.5, C_GREY); offset+=5000;
+    // Arms (Tagged 1 for motion)
+    fillBox(targetMedic, colorMedic, offset, 5000, 2.5, 0.4, 0.4, 0, C_SKIN, 1); 
+    // Orient arms forward
+    for(let i=offset; i<offset+5000; i++) {
+        const tempX = targetMedic[i*3];
+        targetMedic[i*3] = 0; // Center X
+        targetMedic[i*3+1] = 0.5; // Shoulder height
+        targetMedic[i*3+2] = 0.5 + Math.abs(tempX); // Project forward
+    }
+    offset+=5000;
+    // Remainder
+    fillBox(targetMedic, colorMedic, offset, PARTICLE_COUNT-offset, 5, 0.1, 5, -2, C_GREY);
+
+
+    // 3. AMBULANCE (Vehicle)
+    offset = 0;
+    // Body
+    fillBox(targetAmb, colorAmb, offset, 12000, 6.0, 2.5, 2.8, -0.5, C_WHITE); offset+=12000;
+    // Wheels
+    fillSphere(targetAmb, colorAmb, offset, 1000, 0.8, -2, -2, 1.5, C_GREY); offset+=1000;
+    fillSphere(targetAmb, colorAmb, offset, 1000, 0.8, 2, -2, 1.5, C_GREY); offset+=1000;
+    fillSphere(targetAmb, colorAmb, offset, 1000, 0.8, -2, -2, -1.5, C_GREY); offset+=1000;
+    fillSphere(targetAmb, colorAmb, offset, 1000, 0.8, 2, -2, -1.5, C_GREY); offset+=1000;
+    // Lights (Tagged 2 for flashing)
+    fillSphere(targetAmb, colorAmb, offset, 2000, 0.5, 0, 1.2, 0, C_RED, 2); offset+=2000;
+    // Remainder
+    fillBox(targetAmb, colorAmb, offset, PARTICLE_COUNT-offset, 1, 1, 1, 0, C_GREY);
+
+    // --- Init Chaos & Geometry ---
     for(let i=0; i<PARTICLE_COUNT; i++) {
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos(Math.random() * 2 - 1);
-        const r = 8 + Math.random() * 10;
+        // Random space dust
+        chaosPos[i*3] = (Math.random()-0.5) * 25;
+        chaosPos[i*3+1] = (Math.random()-0.5) * 15;
+        chaosPos[i*3+2] = (Math.random()-0.5) * 10;
         
-        chaosPositions[i*3] = r * Math.sin(phi) * Math.cos(theta);
-        chaosPositions[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
-        chaosPositions[i*3+2] = r * Math.cos(phi);
+        positions[i*3] = chaosPos[i*3];
+        positions[i*3+1] = chaosPos[i*3+1];
+        positions[i*3+2] = chaosPos[i*3+2];
         
-        positions[i*3] = chaosPositions[i*3];
-        positions[i*3+1] = chaosPositions[i*3+1];
-        positions[i*3+2] = chaosPositions[i*3+2];
-        
-        colors[i*3] = 0.1; colors[i*3+1] = 0.1; colors[i*3+2] = 0.1;
-        randoms[i] = Math.random();
+        colors[i*3] = 0; colors[i*3+1] = 0; colors[i*3+2] = 0;
     }
 
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     const material = new THREE.PointsMaterial({
-        size: 0.06, vertexColors: true, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false
+        size: 0.1, vertexColors: true, transparent: true, opacity: 0.9, 
+        blending: THREE.AdditiveBlending, depthWrite: false
     });
-    const particles = new THREE.Points(geometry, material);
-    scene.add(particles);
+    const particleSystem = new THREE.Points(geometry, material);
+    scene.add(particleSystem);
 
-    // --- MediaPipe Logic ---
-    const videoElement = document.getElementById('input-video');
+    // --- Animation Logic ---
+    let time = 0;
 
-    function calculateTension(landmarks) {
-        const wrist = landmarks[0];
-        const tips = [8, 12, 16, 20];
-        let avgDist = 0;
-        tips.forEach(idx => {
-            avgDist += Math.hypot(landmarks[idx].x - wrist.x, landmarks[idx].y - wrist.y);
-        });
-        avgDist /= 4;
-        // Map: Open (~0.4) -> 0, Closed (~0.15) -> 1
-        return Math.max(0, Math.min(1, (0.45 - avgDist) * 3.5));
+    function animate() {
+        requestAnimationFrame(animate);
+        time += 0.05;
+
+        const posAttr = geometry.attributes.position.array;
+        const colAttr = geometry.attributes.color.array;
+
+        // Select active arrays based on mode
+        let tPos, tCol;
+        if (currentMode === MODES.PATIENT) { tPos = targetPatient; tCol = colorPatient; }
+        else if (currentMode === MODES.MEDIC) { tPos = targetMedic; tCol = colorMedic; }
+        else { tPos = targetAmb; tCol = colorAmb; }
+
+        for(let i=0; i<PARTICLE_COUNT; i++) {
+            const ix = i*3, iy = i*3+1, iz = i*3+2;
+            const meta = metaData[i];
+
+            // 1. Calculate Animated Target Position (Living World)
+            let tx = tPos[ix];
+            let ty = tPos[iy];
+            let tz = tPos[iz];
+
+            if (cohesion > 0.5) { // Only animate if formed
+                if (currentMode === MODES.MEDIC && meta === 1) { 
+                    // CPR Motion (Arms moving down and up)
+                    const pump = Math.sin(time * 8) * 0.2; // Fast pumping
+                    ty += pump; 
+                    tz += pump * 0.5;
+                }
+                else if (currentMode === MODES.PATIENT && meta === 3) {
+                    // Breathing (Chest rising)
+                    ty += Math.sin(time * 2) * 0.1;
+                }
+                else if (currentMode === MODES.AMBULANCE) {
+                    // Hover/Vibrate
+                    ty += Math.sin(time * 10) * 0.05;
+                }
+            }
+
+            // 2. Interpolate between Chaos and Target based on Cohesion
+            const cx = chaosPos[ix] + (tx - chaosPos[ix]) * cohesion;
+            const cy = chaosPos[iy] + (ty - chaosPos[iy]) * cohesion;
+            const cz = chaosPos[iz] + (tz - chaosPos[iz]) * cohesion;
+
+            // 3. Move actual position towards calculated position (Smoothing)
+            posAttr[ix] += (cx - posAttr[ix]) * 0.1;
+            posAttr[iy] += (cy - posAttr[iy]) * 0.1;
+            posAttr[iz] += (cz - posAttr[iz]) * 0.1;
+
+            // 4. Color Logic
+            let r = tCol[ix], g = tCol[iy], b = tCol[iz];
+            
+            // Flashing Lights for Ambulance
+            if (currentMode === MODES.AMBULANCE && meta === 2) {
+                if (Math.sin(time * 10) > 0) { r=1; g=0; b=0; } // Red
+                else { r=0; g=0; b=1; } // Blue
+            }
+
+            // Dim colors if dissipated
+            const brightness = 0.2 + (cohesion * 0.8);
+            colAttr[ix] += (r * brightness - colAttr[ix]) * 0.1;
+            colAttr[iy] += (g * brightness - colAttr[iy]) * 0.1;
+            colAttr[iz] += (b * brightness - colAttr[iz]) * 0.1;
+        }
+
+        geometry.attributes.position.needsUpdate = true;
+        geometry.attributes.color.needsUpdate = true;
+        
+        // Rotate scene gently
+        scene.rotation.y = Math.sin(time * 0.05) * 0.1;
+
+        renderer.render(scene, camera);
     }
 
-    function determineGesture(landmarks) {
-        const isExtended = (tip, pip) => {
-            return Math.hypot(landmarks[tip].x - landmarks[0].x, landmarks[tip].y - landmarks[0].y) > 
-                   Math.hypot(landmarks[pip].x - landmarks[0].x, landmarks[pip].y - landmarks[0].y);
-        };
-        const fingers = [isExtended(8,6), isExtended(12,10), isExtended(16,14), isExtended(20,18)];
-        const count = fingers.filter(Boolean).length;
+    animate();
 
-        if (count >= 4) return MODES.PATIENT;
-        if (count === 0) return MODES.MEDIC;
-        if (fingers[0] && !fingers[1]) return MODES.BALLOON;
+    // --- Hand Tracking ---
+    const videoElement = document.getElementById('input-video');
+
+    function calcTension(landmarks) {
+        const wrist = landmarks[0];
+        const tips = [8, 12, 16, 20];
+        let avg = 0;
+        tips.forEach(t => avg += Math.hypot(landmarks[t].x - wrist.x, landmarks[t].y - wrist.y));
+        return 1.0 - Math.min(1, Math.max(0, (avg/4 - 0.15) * 3)); // Normalize
+    }
+
+    function detectShapeGesture(landmarks) {
+        const isExt = (tip, pip) => landmarks[tip].y < landmarks[pip].y; // Simple Y check (upright hand)
+        // More robust: Distance from wrist
+        const d = (i) => Math.hypot(landmarks[i].x - landmarks[0].x, landmarks[i].y - landmarks[0].y);
+        
+        const iOut = d(8) > d(6);
+        const mOut = d(12) > d(10);
+        const rOut = d(16) > d(14);
+        const pOut = d(20) > d(18);
+
+        const count = [iOut, mOut, rOut, pOut].filter(Boolean).length;
+        
+        if (count === 4) return MODES.PATIENT; // Open
+        if (count === 1) return MODES.MEDIC;   // Point
+        if (count === 0) return MODES.AMBULANCE; // Fist
         return null;
     }
 
     function onResults(results) {
-        let rightHandDetected = false;
-
+        let leftFound = false;
+        
         if (results.multiHandLandmarks) {
             for (let i = 0; i < results.multiHandLandmarks.length; i++) {
                 const label = results.multiHandedness[i].label;
                 const landmarks = results.multiHandLandmarks[i];
 
-                // --- MIRROR ADJUSTMENT LOGIC ---
-                // MediaPipe "Left" = Physical Left Hand.
-                // MediaPipe "Right" = Physical Right Hand.
-                // We map Physical Left to Selection, Physical Right to Condensation.
+                // NOTE: Camera is mirrored via CSS.
+                // MediaPipe 'Left' = User's LEFT hand (Mapped to Left HUD)
+                // MediaPipe 'Right' = User's RIGHT hand (Mapped to Right HUD)
 
                 if (label === 'Left') {
-                    // SHAPE SELECTOR
-                    const shape = determineGesture(landmarks);
-                    if (shape) {
-                        currentShape = shape;
+                    // LEFT HAND: ENERGY (Cohesion)
+                    leftFound = true;
+                    const tension = calcTension(landmarks);
+                    // Smooth lerp for cohesion
+                    cohesion += (tension - cohesion) * 0.1;
+                    
+                    // UI Update
+                    const uiFill = document.getElementById('power-fill');
+                    uiFill.style.width = (cohesion * 100) + '%';
+                    const uiItem = document.getElementById('state-power');
+                    if(cohesion > 0.5) uiItem.classList.add('active'); else uiItem.classList.remove('active');
+                }
+                
+                if (label === 'Right') {
+                    // RIGHT HAND: SHAPE SELECTOR
+                    const detected = detectShapeGesture(landmarks);
+                    if (detected !== null) {
+                        currentMode = detected;
+                        
                         // UI Update
-                        document.querySelectorAll('.instruction').forEach(el => el.classList.remove('active-state'));
-                        document.getElementById(`state-${currentShape}`).classList.add('active-state');
+                        document.querySelectorAll('#hud .control-group:nth-child(2) .gesture-item').forEach(el => el.classList.remove('active'));
+                        if(currentMode === MODES.PATIENT) document.getElementById('btn-patient').classList.add('active');
+                        if(currentMode === MODES.MEDIC) document.getElementById('btn-medic').classList.add('active');
+                        if(currentMode === MODES.AMBULANCE) document.getElementById('btn-amb').classList.add('active');
                     }
-                } 
-                else if (label === 'Right') {
-                    // CONDENSER
-                    rightHandDetected = true;
-                    const tension = calculateTension(landmarks);
-                    // Smooth transition
-                    condensationLevel += (tension - condensationLevel) * 0.15;
-                    document.getElementById('tension-bar').style.width = `${condensationLevel * 100}%`;
                 }
             }
         }
 
-        if (!rightHandDetected) {
-            condensationLevel *= 0.95; // Decay if hand lost
-            document.getElementById('tension-bar').style.width = `${condensationLevel * 100}%`;
+        if (!leftFound) {
+            // Decay cohesion if left hand leaves
+            cohesion *= 0.95;
+            document.getElementById('power-fill').style.width = (cohesion * 100) + '%';
+            document.getElementById('state-power').classList.remove('active');
         }
     }
 
@@ -389,67 +458,7 @@
         width: 640, height: 480
     });
     cameraUtils.start().then(() => document.getElementById('loading').style.display = 'none');
-
-    // --- Loop ---
-    let time = 0;
-    function animate() {
-        requestAnimationFrame(animate);
-        time += 0.01;
-
-        const posArr = geometry.attributes.position.array;
-        const colArr = geometry.attributes.color.array;
-
-        // Select Target Arrays
-        let tPos, tCol;
-        if(currentShape === MODES.PATIENT) { tPos = targets.patient; tCol = targets.patientColors; }
-        else if(currentShape === MODES.MEDIC) { tPos = targets.medic; tCol = targets.medicColors; }
-        else { tPos = targets.balloon; tCol = targets.balloonColors; }
-
-        for (let i = 0; i < PARTICLE_COUNT; i++) {
-            const ix = i * 3, iy = i * 3 + 1, iz = i * 3 + 2;
-
-            // Target Position based on Condensation
-            const tx = chaosPositions[ix] + (tPos[ix] - chaosPositions[ix]) * condensationLevel;
-            const ty = chaosPositions[iy] + (tPos[iy] - chaosPositions[iy]) * condensationLevel;
-            const tz = chaosPositions[iz] + (tPos[iz] - chaosPositions[iz]) * condensationLevel;
-
-            // Target Color
-            const targetR = tCol[ix];
-            const targetG = tCol[iy];
-            const targetB = tCol[iz];
-
-            // Physics Update
-            const speed = 0.1 + (randoms[i] * 0.05);
-            
-            posArr[ix] += (tx - posArr[ix]) * speed;
-            posArr[iy] += (ty - posArr[iy]) * speed;
-            posArr[iz] += (tz - posArr[iz]) * speed;
-
-            // Color Blending (Slow fade to target color)
-            colArr[ix] += (targetR - colArr[ix]) * 0.05;
-            colArr[iy] += (targetG - colArr[iy]) * 0.05;
-            colArr[iz] += (targetB - colArr[iz]) * 0.05;
-            
-            // Jitter when loose
-            if(condensationLevel < 0.9) {
-                const noise = 0.02 * (1 - condensationLevel);
-                posArr[ix] += (Math.random()-0.5)*noise;
-                posArr[iy] += (Math.random()-0.5)*noise;
-                posArr[iz] += (Math.random()-0.5)*noise;
-            }
-        }
-
-        geometry.attributes.position.needsUpdate = true;
-        geometry.attributes.color.needsUpdate = true;
-        
-        // Dynamic Camera Rotation
-        const rot = Math.sin(time * 0.2) * 0.2;
-        scene.rotation.y = rot;
-
-        renderer.render(scene, camera);
-    }
-
-    animate();
+    
     window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
