@@ -2,47 +2,55 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Bio-Interactive Particle Heart</title>
+    <title>FFT Bio-Particle System</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', monospace; }
         
-        /* Three.js Container */
+        /* 3D Canvas */
         #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
 
-        /* UI Overlay - Heart Rate */
-        #ui-layer {
+        /* HUD Overlay */
+        #hud {
             position: absolute; top: 20px; right: 20px; z-index: 10;
-            color: white; text-align: right;
-            background: rgba(0, 0, 0, 0.5); padding: 15px; border-radius: 12px;
-            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #00ffcc; text-align: right; pointer-events: none;
         }
-        .bpm-label { font-size: 12px; text-transform: uppercase; letter-spacing: 2px; color: #aaa; }
-        .bpm-value { font-size: 48px; font-weight: 700; color: #ff3366; text-shadow: 0 0 20px rgba(255, 51, 102, 0.6); }
-        .status { font-size: 10px; color: #666; margin-top: 5px; }
+        .hud-panel {
+            background: rgba(0, 20, 20, 0.8);
+            border: 1px solid #00ffcc;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+        }
+        .label { font-size: 10px; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px; }
+        .big-value { font-size: 42px; font-weight: bold; color: #ff3366; text-shadow: 0 0 10px rgba(255, 51, 102, 0.5); }
+        .graph-container { width: 200px; height: 60px; background: #001111; border: 1px solid #004444; margin-top: 5px; position: relative; }
+        canvas.mini-graph { width: 100%; height: 100%; display: block; }
 
-        /* Webcam Feed - Bottom Right */
+        /* Webcam Feed */
         #cam-container {
             position: absolute; bottom: 20px; right: 20px; z-index: 10;
-            width: 240px; height: 180px;
-            border-radius: 12px; overflow: hidden;
-            border: 2px solid rgba(255, 255, 255, 0.1);
+            width: 200px; height: 150px;
+            border: 1px solid #333;
             background: #000;
         }
         #input-video {
-            position: absolute; width: 100%; height: 100%; object-fit: cover;
-            transform: scaleX(-1); /* Mirror effect */
+            width: 100%; height: 100%; object-fit: cover;
+            transform: scaleX(-1);
+            opacity: 0.6;
         }
         #overlay-canvas {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             transform: scaleX(-1);
         }
 
-        /* Loading Spinner */
         #loader {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: white; z-index: 20; font-size: 24px; pointer-events: none;
+            color: #00ffcc; z-index: 20; font-size: 16px;
+            animation: blink 1s infinite;
         }
+        @keyframes blink { 50% { opacity: 0.5; } }
     </style>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
@@ -50,12 +58,24 @@
 </head>
 <body>
 
-    <div id="loader">Initializing AI Models...</div>
+    <div id="loader">INITIALIZING SENSORS...</div>
 
-    <div id="ui-layer">
-        <div class="bpm-label">Heart Rate</div>
-        <div class="bpm-value" id="bpm-display">--</div>
-        <div class="status" id="ppg-status">Acquiring signal...</div>
+    <div id="hud">
+        <div class="hud-panel">
+            <div class="label">Est. Heart Rate (FFT)</div>
+            <div class="big-value" id="bpm-display">--</div>
+            <div class="label" id="status-display">NO SIGNAL</div>
+        </div>
+        <div class="hud-panel">
+            <div class="label">Raw Signal</div>
+            <div class="graph-container">
+                <canvas id="signal-graph" width="200" height="60"></canvas>
+            </div>
+            <div class="label" style="margin-top: 5px;">Frequency Spectrum</div>
+            <div class="graph-container">
+                <canvas id="fft-graph" width="200" height="60"></canvas>
+            </div>
+        </div>
     </div>
 
     <div id="cam-container">
@@ -67,318 +87,427 @@
 
 <script>
 /**
- * PART 1: THREE.JS PARTICLE SYSTEM
+ * SECTION 1: MATH & FFT (The Signal Processing Core)
+ * Custom implementation of Cooley-Tukey FFT algorithm
+ */
+
+// Complex Number Helper
+class Complex {
+    constructor(re, im) { this.re = re; this.im = im; }
+    add(other) { return new Complex(this.re + other.re, this.im + other.im); }
+    sub(other) { return new Complex(this.re - other.re, this.im - other.im); }
+    mul(other) { return new Complex(this.re * other.re - this.im * other.im, this.re * other.im + this.im * other.re); }
+}
+
+// Bit-reverse copy for FFT
+function bitReverseArray(input) {
+    const n = input.length;
+    const output = new Array(n);
+    let k = Math.log2(n);
+    for (let i = 0; i < n; i++) {
+        let rev = 0;
+        let temp = i;
+        for (let j = 0; j < k; j++) {
+            rev = (rev << 1) | (temp & 1);
+            temp >>= 1;
+        }
+        output[rev] = input[i];
+    }
+    return output;
+}
+
+// Iterative FFT Implementation
+function computeFFT(inputData) {
+    const n = inputData.length;
+    let a = bitReverseArray(inputData.map(v => new Complex(v, 0))); // Convert real to complex
+
+    for (let len = 2; len <= n; len <<= 1) {
+        let angle = -2 * Math.PI / len;
+        let wlen = new Complex(Math.cos(angle), Math.sin(angle));
+        for (let i = 0; i < n; i += len) {
+            let w = new Complex(1, 0);
+            for (let j = 0; j < len / 2; j++) {
+                let u = a[i + j];
+                let v = a[i + j + len / 2].mul(w);
+                a[i + j] = u.add(v);
+                a[i + j + len / 2] = u.sub(v);
+                w = w.mul(wlen);
+            }
+        }
+    }
+    // Return magnitudes
+    return a.map(c => Math.sqrt(c.re * c.re + c.im * c.im));
+}
+
+// Linear Interpolation for resampling uneven timestamps
+function lerp(v0, v1, t) { return v0 * (1 - t) + v1 * t; }
+
+/**
+ * SECTION 2: THREE.JS PARTICLE SYSTEM
  */
 const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x050505, 0.002);
-
+scene.fog = new THREE.FogExp2(0x000000, 0.002);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.z = 30;
+camera.position.z = 35;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.getElementById('canvas-container').appendChild(renderer.domElement);
 
-// Particle Configuration
-const particleCount = 15000;
-const geometry = new THREE.BufferGeometry();
-const positions = new Float32Array(particleCount * 3);
-const colors = new Float32Array(particleCount * 3);
-const targetPositions = new Float32Array(particleCount * 3); // Heart shape
-const randomPositions = new Float32Array(particleCount * 3); // Exploded shape
+// Particle Setup
+const particleCount = 20000;
+const pGeom = new THREE.BufferGeometry();
+const pPos = new Float32Array(particleCount * 3);
+const pCol = new Float32Array(particleCount * 3);
+const pTarget = new Float32Array(particleCount * 3);
+const pRandom = new Float32Array(particleCount * 3);
 
-const color1 = new THREE.Color(0xff3366); // Heart Red
-const color2 = new THREE.Color(0x44aaff); // Sci-fi Blue
+// Colors
+const colHeart = new THREE.Color(0xff0044);
+const colOpen = new THREE.Color(0x00aaff);
 
-// Initialize Particles
+// Init Geometry
 for (let i = 0; i < particleCount; i++) {
-    // 1. Create Heart Shape (Parametric Equations)
+    // 1. Heart Shape (Math)
     // x = 16sin^3(t)
     // y = 13cos(t) - 5cos(2t) - 2cos(3t) - cos(4t)
     const t = Math.random() * Math.PI * 2;
-    const u = Math.random() * Math.PI * 2; // For volume
+    const jitter = Math.random();
     
-    // Basic heart curve
-    let x = 16 * Math.pow(Math.sin(t), 3);
-    let y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
-    let z = (Math.random() - 0.5) * 5; // Thin volume
-    
-    // Scale down to fit camera
-    x *= 0.5; y *= 0.5; z *= 0.5;
+    let hx = 16 * Math.pow(Math.sin(t), 3);
+    let hy = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+    let hz = (Math.random() - 0.5) * 8; 
 
-    targetPositions[i * 3] = x;
-    targetPositions[i * 3 + 1] = y;
-    targetPositions[i * 3 + 2] = z;
+    // Add volumetric scatter to heart
+    hx += (Math.random() - 0.5) * 1.5;
+    hy += (Math.random() - 0.5) * 1.5;
 
-    // 2. Create Random/Exploded State
-    randomPositions[i * 3] = (Math.random() - 0.5) * 60;
-    randomPositions[i * 3 + 1] = (Math.random() - 0.5) * 60;
-    randomPositions[i * 3 + 2] = (Math.random() - 0.5) * 60;
+    pTarget[i*3] = hx * 0.5;
+    pTarget[i*3+1] = hy * 0.5;
+    pTarget[i*3+2] = hz * 0.5;
 
-    // Start at random
-    positions[i * 3] = randomPositions[i * 3];
-    positions[i * 3 + 1] = randomPositions[i * 3 + 1];
-    positions[i * 3 + 2] = randomPositions[i * 3 + 2];
+    // 2. Exploded Shape
+    pRandom[i*3] = (Math.random() - 0.5) * 80;
+    pRandom[i*3+1] = (Math.random() - 0.5) * 80;
+    pRandom[i*3+2] = (Math.random() - 0.5) * 50;
 
-    colors[i * 3] = color2.r;
-    colors[i * 3 + 1] = color2.g;
-    colors[i * 3 + 2] = color2.b;
+    // Start random
+    pPos[i*3] = pRandom[i*3];
+    pPos[i*3+1] = pRandom[i*3+1];
+    pPos[i*3+2] = pRandom[i*3+2];
+
+    pCol[i*3] = colOpen.r;
+    pCol[i*3+1] = colOpen.g;
+    pCol[i*3+2] = colOpen.b;
 }
 
-geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+pGeom.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+pGeom.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
 
-const material = new THREE.PointsMaterial({
-    size: 0.2,
-    vertexColors: true,
-    blending: THREE.AdditiveBlending,
-    depthTest: false,
-    transparent: true,
-    opacity: 0.8
+const pMat = new THREE.PointsMaterial({
+    size: 0.15, vertexColors: true, blending: THREE.AdditiveBlending, depthTest: false, transparent: true, opacity: 0.8
 });
+const particleSystem = new THREE.Points(pGeom, pMat);
+scene.add(particleSystem);
 
-const particles = new THREE.Points(geometry, material);
-scene.add(particles);
-
-// State Variables
-let handClosedAmount = 0; // 0 = Open (Exploded), 1 = Closed (Heart)
-let currentBPM = 60;
-let beatTime = 0;
 
 /**
- * PART 2: COMPUTER VISION & LOGIC
+ * SECTION 3: SENSORS & SIGNAL PROCESSING LOOP
  */
-const videoElement = document.getElementById('input-video');
-const canvasElement = document.getElementById('overlay-canvas');
-const canvasCtx = canvasElement.getContext('2d');
-const bpmDisplay = document.getElementById('bpm-display');
-const ppgStatus = document.getElementById('ppg-status');
 
-// PPG Variables
-let foreheadGreenValues = [];
-let lastBeatTime = 0;
-const maxBuffer = 150; // Buffer for signal processing
-let ppgCanvas; // Offscreen canvas to read pixels
-let ppgCtx;
+// --- Variables ---
+let handTension = 0; // 0 (Open) to 1 (Fist)
+let detectedBPM = 0;
+let lastPulseTime = 0;
 
-function setupPPG() {
-    ppgCanvas = document.createElement('canvas');
-    ppgCanvas.width = 100; // Low res is fine for color averaging
-    ppgCanvas.height = 100;
-    ppgCtx = ppgCanvas.getContext('2d');
-}
-setupPPG();
+// PPG Buffers
+const MAX_SAMPLES = 512; // Power of 2 for FFT
+const TARGET_FPS = 30;   // Resample signal to 30Hz
+let rawGreenBuffer = []; // {t: time, v: value}
 
-// --- Face Mesh for PPG ---
+// UI Graphs
+const signalCtx = document.getElementById('signal-graph').getContext('2d');
+const fftCtx = document.getElementById('fft-graph').getContext('2d');
+
+// --- MediaPipe Face (PPG) ---
 const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
-faceMesh.setOptions({ maxNumFaces: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+faceMesh.setOptions({maxNumFaces: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5});
 
-faceMesh.onResults((results) => {
+// Offscreen canvas for reading pixels
+const pxCanvas = document.createElement('canvas');
+pxCanvas.width = 50; pxCanvas.height = 50;
+const pxCtx = pxCanvas.getContext('2d');
+
+faceMesh.onResults(results => {
     if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
         const landmarks = results.multiFaceLandmarks[0];
+        // Forehead center approx (Index 151)
+        const pt = landmarks[151];
         
-        // Extract Forehead Region (approximate indices)
-        // Mid-forehead is around index 10, 338, 297, 332
-        const foreheadPoint = landmarks[151]; // Center forehead
+        // Draw Overlay point
+        const ovCanvas = document.getElementById('overlay-canvas');
+        const ovCtx = ovCanvas.getContext('2d');
+        ovCtx.clearRect(0,0,ovCanvas.width, ovCanvas.height);
         
-        // Draw Overlay (Forehead dot)
-        const x = foreheadPoint.x * canvasElement.width;
-        const y = foreheadPoint.y * canvasElement.height;
+        // Mirror coords for overlay drawing
+        const x = (1 - pt.x) * ovCanvas.width; 
+        const y = pt.y * ovCanvas.height;
         
-        canvasCtx.fillStyle = '#00ff00';
-        canvasCtx.beginPath();
-        canvasCtx.arc(x, y, 3, 0, 2 * Math.PI);
-        canvasCtx.fill();
+        ovCtx.fillStyle = '#00ffcc';
+        ovCtx.beginPath(); ovCtx.arc(x, y, 4, 0, 2*Math.PI); ovCtx.fill();
 
-        // --- PPG SIGNAL EXTRACTION ---
-        // Crop a small area around the forehead from the video feed
-        // Note: Video coordinates need mapping
-        const vidW = videoElement.videoWidth;
-        const vidH = videoElement.videoHeight;
-        const cropX = Math.floor(foreheadPoint.x * vidW);
-        const cropY = Math.floor(foreheadPoint.y * vidH);
-        
-        if (cropX > 0 && cropY > 0) {
-            // Draw video frame to offscreen canvas
-            ppgCtx.drawImage(videoElement, cropX - 10, cropY - 10, 20, 20, 0, 0, 20, 20);
-            const frameData = ppgCtx.getImageData(0, 0, 20, 20);
+        // Extract Green Channel
+        const vid = document.getElementById('input-video');
+        if(vid.videoWidth > 0) {
+            // Map normalized coord to video dimensions
+            const vx = Math.floor(pt.x * vid.videoWidth);
+            const vy = Math.floor(pt.y * vid.videoHeight);
             
-            // Average Green Channel
-            let avgGreen = 0;
-            for (let i = 0; i < frameData.data.length; i += 4) {
-                avgGreen += frameData.data[i + 1];
-            }
-            avgGreen /= (frameData.data.length / 4);
+            // Draw tiny crop
+            pxCtx.drawImage(vid, vx-5, vy-5, 10, 10, 0, 0, 10, 10);
+            const frame = pxCtx.getImageData(0,0,10,10);
+            let avgG = 0;
+            for(let i=0; i<frame.data.length; i+=4) avgG += frame.data[i+1];
+            avgG /= (frame.data.length/4);
 
-            processPPGSignal(avgGreen);
+            // Add to buffer
+            rawGreenBuffer.push({ t: performance.now(), v: avgG });
+            if(rawGreenBuffer.length > MAX_SAMPLES * 2) rawGreenBuffer.shift(); // Keep buffer manageable
         }
+        document.getElementById('status-display').innerText = "SIGNAL ACQUIRED";
+        document.getElementById('status-display').style.color = "#00ffcc";
     } else {
-        ppgStatus.innerText = "Face not detected";
+        document.getElementById('status-display').innerText = "NO FACE";
+        document.getElementById('status-display').style.color = "#ff0000";
     }
 });
 
-// --- Simple Peak Detection for PPG ---
-function processPPGSignal(value) {
-    const now = performance.now();
-    foreheadGreenValues.push({ val: value, time: now });
-    if (foreheadGreenValues.length > maxBuffer) foreheadGreenValues.shift();
-
-    if (foreheadGreenValues.length < 30) return; // Wait for buffer
-
-    // Detrend: Calculate moving average
-    let sum = 0;
-    foreheadGreenValues.forEach(v => sum += v.val);
-    const avg = sum / foreheadGreenValues.length;
-
-    // Check for peak
-    // A simplified algorithm: look for zero-crossing or local maxima above average
-    const currentVal = foreheadGreenValues[foreheadGreenValues.length - 1].val;
-    const prevVal = foreheadGreenValues[foreheadGreenValues.length - 2].val;
-    const prevPrevVal = foreheadGreenValues[foreheadGreenValues.length - 3].val;
-
-    // Peak detection logic
-    // We are looking for a local maximum
-    if (prevVal > currentVal && prevVal > prevPrevVal && prevVal > avg + 0.5) {
-        // Potential beat
-        const timeDiff = now - lastBeatTime;
-        if (timeDiff > 400 && timeDiff < 1500) { // Limit to 40-150 BPM range
-            const instantBPM = 60000 / timeDiff;
-            // Smooth the BPM
-            currentBPM = Math.round(currentBPM * 0.7 + instantBPM * 0.3);
-            bpmDisplay.innerText = currentBPM;
-            ppgStatus.innerText = "Signal Locked";
-            
-            // Trigger Visual Beat
-            triggerHeartBeat();
-        }
-        lastBeatTime = now;
-    }
-}
-
-function triggerHeartBeat() {
-    beatTime = 1.0; // Reset beat animation scalar
-}
-
-
-// --- Hands for Gesture Control ---
+// --- MediaPipe Hands (Gestures) ---
 const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-hands.setOptions({ maxNumHands: 2, minDetectionConfidence: 0.7, minTrackingConfidence: 0.5 });
+hands.setOptions({maxNumHands: 2, minDetectionConfidence: 0.7, minTrackingConfidence: 0.5});
 
-hands.onResults((results) => {
-    // Clear Overlay
-    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-    
-    // Draw Hand Overlay
-    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        let totalClosedFactor = 0;
-
-        for (const landmarks of results.multiHandLandmarks) {
-            drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 1});
-            drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 0.5, radius: 2});
-
-            // Calculate "Closedness"
-            // Measure distance between Wrist (0) and Middle Finger Tip (12)
-            const wrist = landmarks[0];
-            const tip = landmarks[12];
-            const base = landmarks[9]; // Middle finger MCP
-
-            // Euclidian distance roughly
-            const handSize = Math.hypot(base.x - wrist.x, base.y - wrist.y);
-            const openDist = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
+hands.onResults(results => {
+    if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        let totalRatio = 0;
+        results.multiHandLandmarks.forEach(lm => {
+            // Distance Wrist(0) to MiddleTip(12)
+            const d1 = Math.hypot(lm[12].x - lm[0].x, lm[12].y - lm[0].y);
+            // Distance Wrist(0) to MiddleMCP(9) - roughly palm size
+            const d2 = Math.hypot(lm[9].x - lm[0].x, lm[9].y - lm[0].y);
             
-            // Ratio: If Tip is close to Wrist compared to palm size -> Closed
-            // Normal open hand ratio ~ 1.8 to 2.0
-            // Closed fist ratio ~ 0.8 to 1.0
-            
-            let ratio = openDist / handSize;
-            // Map 1.8 -> 0 (Open), 1.0 -> 1 (Closed)
-            let closed = (1.8 - ratio) / 0.8;
-            closed = Math.max(0, Math.min(1, closed)); // Clamp
-            
-            totalClosedFactor += closed;
-        }
-
+            // Ratio: > 1.8 is open, < 1.0 is closed
+            const ratio = d1/d2;
+            let closed = (1.8 - ratio); // Simple remapping
+            closed = Math.max(0, Math.min(1, closed)); // Clamp 0-1
+            totalRatio += closed;
+        });
+        const avg = totalRatio / results.multiHandLandmarks.length;
         // Smooth transition
-        const targetFactor = totalClosedFactor / results.multiHandLandmarks.length; // Average if 2 hands
-        handClosedAmount += (targetFactor - handClosedAmount) * 0.1; // Lerp
+        handTension += (avg - handTension) * 0.1;
     } else {
-        // If no hands, slowly drift to open
-        handClosedAmount += (0 - handClosedAmount) * 0.05;
+        handTension += (0 - handTension) * 0.05;
     }
 });
 
-// --- Camera Setup ---
-const cameraObj = new Camera(videoElement, {
+// --- Camera ---
+const cameraObj = new Camera(document.getElementById('input-video'), {
     onFrame: async () => {
-        await faceMesh.send({image: videoElement});
-        await hands.send({image: videoElement});
+        const vid = document.getElementById('input-video');
+        await faceMesh.send({image: vid});
+        await hands.send({image: vid});
     },
-    width: 640,
-    height: 480
+    width: 320, height: 240
 });
-cameraObj.start()
-    .then(() => document.getElementById('loader').style.display = 'none')
-    .catch(err => console.error("Camera Error:", err));
+cameraObj.start().then(() => document.getElementById('loader').style.display='none');
 
 
 /**
- * PART 3: ANIMATION LOOP
+ * SECTION 4: PROCESS LOOP (FFT & VISUALS)
  */
+
+function runSignalProcessing() {
+    if(rawGreenBuffer.length < 60) return; // Wait for data
+
+    // 1. Resample to fixed 30Hz
+    const now = performance.now();
+    const duration = 1000 / TARGET_FPS; 
+    const resampled = [];
+    
+    // We want the last N samples at fixed intervals
+    // Start time:
+    let t = rawGreenBuffer[rawGreenBuffer.length-1].t;
+    
+    // Backtrack MAX_SAMPLES steps
+    for(let i=0; i<MAX_SAMPLES; i++) {
+        const targetT = t - (i * duration);
+        
+        // Find closest points in raw buffer
+        // Simple linear search (optimization: binary search)
+        let p1 = rawGreenBuffer.find(p => p.t <= targetT); 
+        // Note: raw buffer is time ascending. 
+        // Actually, reverse search is better here.
+        let idx = rawGreenBuffer.length - 1;
+        while(idx >= 0 && rawGreenBuffer[idx].t > targetT) idx--;
+        
+        if(idx >= 0 && idx < rawGreenBuffer.length - 1) {
+            const v0 = rawGreenBuffer[idx];
+            const v1 = rawGreenBuffer[idx+1];
+            // Lerp
+            const fraction = (targetT - v0.t) / (v1.t - v0.t);
+            resampled.unshift(v0.v + (v1.v - v0.v) * fraction);
+        } else {
+            resampled.unshift(0); // Padding
+        }
+    }
+
+    // 2. Remove DC Offset (Detrend)
+    const mean = resampled.reduce((a,b)=>a+b, 0) / resampled.length;
+    const normalized = resampled.map(v => v - mean);
+
+    // 3. Apply Window Function (Hamming) to reduce spectral leakage
+    const windowed = normalized.map((v, i) => {
+        return v * (0.54 - 0.46 * Math.cos((2 * Math.PI * i) / (MAX_SAMPLES - 1)));
+    });
+
+    // 4. Run FFT
+    const spectrum = computeFFT(windowed);
+
+    // 5. Find Peak Frequency in Heart Range (45 - 200 BPM)
+    // Resolution = SampleRate / N = 30 / 512 = 0.058 Hz per bin
+    const binSize = TARGET_FPS / MAX_SAMPLES;
+    const minBin = Math.floor(0.75 / binSize); // 45 BPM
+    const maxBin = Math.floor(3.5 / binSize);  // 210 BPM
+    
+    let maxMag = 0;
+    let peakBin = 0;
+
+    for(let i=minBin; i<=maxBin; i++) {
+        if(spectrum[i] > maxMag) {
+            maxMag = spectrum[i];
+            peakBin = i;
+        }
+    }
+
+    // 6. Calculate BPM
+    const freq = peakBin * binSize;
+    const newBPM = freq * 60;
+
+    // Smooth Display
+    if(maxMag > 10) { // Noise threshold
+        detectedBPM = detectedBPM * 0.8 + newBPM * 0.2;
+        document.getElementById('bpm-display').innerText = Math.round(detectedBPM);
+    }
+
+    // 7. Visual Debug
+    drawDebug(normalized, spectrum, peakBin, minBin, maxBin);
+}
+
+function drawDebug(signal, spectrum, peakBin, min, max) {
+    // Signal
+    const w = signalCtx.canvas.width;
+    const h = signalCtx.canvas.height;
+    signalCtx.clearRect(0,0,w,h);
+    signalCtx.strokeStyle = '#00ffcc';
+    signalCtx.beginPath();
+    for(let i=0; i<signal.length; i++) {
+        const x = (i/signal.length) * w;
+        const y = h/2 - (signal[i] * 5); // Scale
+        if(i==0) signalCtx.moveTo(x,y); else signalCtx.lineTo(x,y);
+    }
+    signalCtx.stroke();
+
+    // FFT
+    fftCtx.clearRect(0,0,w,h);
+    fftCtx.fillStyle = '#ff3366';
+    const barW = w / (max - min);
+    for(let i=min; i<max; i++) {
+        const val = spectrum[i] / 50; // Scale
+        const x = (i-min) * barW;
+        fftCtx.fillRect(x, h - val, barW-1, val);
+        if(i === peakBin) {
+            fftCtx.fillStyle = '#ffffff'; // Highlight peak
+            fftCtx.fillRect(x, h - val, barW-1, val);
+            fftCtx.fillStyle = '#ff3366';
+        }
+    }
+}
+
+// Run processing 4 times a second
+setInterval(runSignalProcessing, 250);
+
+
+/**
+ * SECTION 5: ANIMATION LOOP
+ */
+let pulsePhase = 0;
+
 function animate() {
     requestAnimationFrame(animate);
 
+    // Update Pulse
+    // We increment phase based on detected BPM
+    // Phase 0 to 2PI
+    const bpm = detectedBPM || 60;
+    const bps = bpm / 60;
+    const speed = bps * 2 * Math.PI * 0.016; // per frame approx
+    pulsePhase += speed;
+    
+    // Heartbeat curve (sudden expansion, slow decay)
+    // sin wave modified to be "thumpy"
+    const rawSine = Math.sin(pulsePhase); 
+    const beat = Math.pow(Math.max(0, rawSine), 8); // Sharpen the peak
+
     // Update Particles
-    const positionsAttribute = geometry.attributes.position;
-    const colorsAttribute = geometry.attributes.color;
+    const pos = pGeom.attributes.position;
+    const col = pGeom.attributes.color;
+    
+    // Dynamic resizing based on beat
+    const beatScale = 1 + (beat * 0.3 * handTension); // Only pulse when heart forms
 
-    // Decay beat animation
-    beatTime = Math.max(0, beatTime - 0.05);
-    // Easing for beat: A quick expansion and slow contraction
-    const beatScale = 1 + (Math.sin(beatTime * Math.PI) * 0.2 * handClosedAmount); // Beat only visible when heart forms
-
-    const time = Date.now() * 0.001;
-    scene.rotation.y = time * 0.1;
-
-    for (let i = 0; i < particleCount; i++) {
-        // Interpolate Positions based on Hand Gesture
-        const rx = randomPositions[i * 3];
-        const ry = randomPositions[i * 3 + 1];
-        const rz = randomPositions[i * 3 + 2];
-
-        // Target (Heart) with Beat Scaling applied
-        const tx = targetPositions[i * 3] * beatScale;
-        const ty = targetPositions[i * 3 + 1] * beatScale;
-        const tz = targetPositions[i * 3 + 2] * beatScale;
-
-        // Current Position LERP
-        const cx = rx + (tx - rx) * handClosedAmount;
-        const cy = ry + (ty - ry) * handClosedAmount;
-        const cz = rz + (tz - rz) * handClosedAmount;
-
-        // Add some noise/wobble
-        const noise = Math.sin(time * 2 + i) * 0.05 * (1 - handClosedAmount);
+    for(let i=0; i<particleCount; i++) {
+        // Source (Random)
+        const rx = pRandom[i*3];
+        const ry = pRandom[i*3+1];
+        const rz = pRandom[i*3+2];
         
-        positionsAttribute.setXYZ(i, cx + noise, cy + noise, cz + noise);
+        // Target (Heart)
+        const tx = pTarget[i*3] * beatScale;
+        const ty = pTarget[i*3+1] * beatScale;
+        const tz = pTarget[i*3+2] * beatScale;
 
-        // Interpolate Colors
-        // Open: Blue, Closed: Red
-        const r = color2.r + (color1.r - color2.r) * handClosedAmount;
-        const g = color2.g + (color1.g - color2.g) * handClosedAmount;
-        const b = color2.b + (color1.b - color2.b) * handClosedAmount;
+        // Lerp based on hand tension
+        const cx = rx + (tx - rx) * handTension;
+        const cy = ry + (ty - ry) * handTension;
+        const cz = rz + (tz - rz) * handTension;
 
-        // Make it brighter on beat
-        const brightness = 1 + beatTime * 0.5;
+        // Add floaty noise
+        const time = Date.now() * 0.0005;
+        const nX = Math.sin(time + ry*0.1) * 0.2 * (1-handTension); // More float when open
+        
+        pos.setXYZ(i, cx + nX, cy, cz);
 
-        colorsAttribute.setXYZ(i, r * brightness, g * brightness, b * brightness);
+        // Colors
+        // Lerp Blue -> Red
+        const r = colOpen.r + (colHeart.r - colOpen.r) * handTension;
+        const g = colOpen.g + (colHeart.g - colOpen.g) * handTension;
+        const b = colOpen.b + (colHeart.b - colOpen.b) * handTension;
+        
+        // Brighten on beat
+        const bright = 1 + (beat * handTension);
+        col.setXYZ(i, r*bright, g*bright, b*bright);
     }
 
-    positionsAttribute.needsUpdate = true;
-    colorsAttribute.needsUpdate = true;
+    pos.needsUpdate = true;
+    col.needsUpdate = true;
+    
+    scene.rotation.y += 0.002;
 
-    // UI Canvas Resizing
-    if (canvasElement.width !== videoElement.videoWidth) {
-        canvasElement.width = videoElement.videoWidth;
-        canvasElement.height = videoElement.videoHeight;
+    // Overlay Canvas Resize Check
+    const ov = document.getElementById('overlay-canvas');
+    const vid = document.getElementById('input-video');
+    if(ov.width !== vid.videoWidth && vid.videoWidth > 0) {
+        ov.width = vid.videoWidth;
+        ov.height = vid.videoHeight;
     }
 
     renderer.render(scene, camera);
@@ -386,7 +515,7 @@ function animate() {
 
 animate();
 
-// Handle Resize
+// Resize
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
