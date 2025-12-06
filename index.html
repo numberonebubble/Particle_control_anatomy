@@ -2,712 +2,397 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bio-Metric Heart System</title>
-    
-    <!-- Three.js -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    
-    <!-- MediaPipe Hands -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-    <!-- MediaPipe FaceMesh -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
-
+    <title>Bio-Interactive Particle Heart</title>
     <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            background-color: #050505;
-            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            color: white;
-        }
-
-        #canvas-container {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: 1;
-        }
-
-        #input-video {
-            position: absolute;
-            top: 0;
-            left: 0;
-            opacity: 0;
-            pointer-events: none;
-            width: 1px;
-            height: 1px;
-        }
-
-        #ui-layer {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            z-index: 10;
-            pointer-events: none;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-
-        .glass-panel {
-            background: rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 20px;
-            border-radius: 12px;
-            max-width: 300px;
-            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
-            transition: all 0.3s ease;
-        }
-
-        h1 {
-            font-size: 1.2rem;
-            margin: 0 0 10px 0;
-            font-weight: 300;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            color: #fff;
-            border-bottom: 1px solid rgba(255,255,255,0.2);
-            padding-bottom: 10px;
-        }
-
-        p {
-            font-size: 0.9rem;
-            color: #aaa;
-            margin: 0;
-            line-height: 1.5;
-        }
-
-        .status-indicator {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-top: 15px;
-        }
-
-        .dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background-color: #ff3333;
-            box-shadow: 0 0 10px #ff3333;
-            transition: background-color 0.3s;
-        }
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', sans-serif; }
         
-        .dot.active {
-            background-color: #33ffaa;
-            box-shadow: 0 0 10px #33ffaa;
+        /* Three.js Container */
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+
+        /* UI Overlay - Heart Rate */
+        #ui-layer {
+            position: absolute; top: 20px; right: 20px; z-index: 10;
+            color: white; text-align: right;
+            background: rgba(0, 0, 0, 0.5); padding: 15px; border-radius: 12px;
+            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .bpm-label { font-size: 12px; text-transform: uppercase; letter-spacing: 2px; color: #aaa; }
+        .bpm-value { font-size: 48px; font-weight: 700; color: #ff3366; text-shadow: 0 0 20px rgba(255, 51, 102, 0.6); }
+        .status { font-size: 10px; color: #666; margin-top: 5px; }
+
+        /* Webcam Feed - Bottom Right */
+        #cam-container {
+            position: absolute; bottom: 20px; right: 20px; z-index: 10;
+            width: 240px; height: 180px;
+            border-radius: 12px; overflow: hidden;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            background: #000;
+        }
+        #input-video {
+            position: absolute; width: 100%; height: 100%; object-fit: cover;
+            transform: scaleX(-1); /* Mirror effect */
+        }
+        #overlay-canvas {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            transform: scaleX(-1);
         }
 
-        .metric-bar {
-            width: 100%;
-            height: 4px;
-            background: rgba(255,255,255,0.1);
-            margin-top: 15px;
-            border-radius: 2px;
-            overflow: hidden;
-            position: relative;
-        }
-
-        .metric-fill {
-            height: 100%;
-            width: 0%;
-            background: linear-gradient(90deg, #00d2ff, #3a7bd5);
-            transition: width 0.2s ease, background 0.5s ease;
-        }
-
-        .webcam-preview {
-            position: absolute;
-            bottom: 20px;
-            right: 20px;
-            width: 160px;
-            height: 120px;
-            border-radius: 8px;
-            overflow: hidden;
-            z-index: 10;
-            border: 1px solid rgba(255,255,255,0.2);
-            opacity: 0.7;
-        }
-
-        #preview-canvas {
-            width: 100%;
-            height: 100%;
-            transform: scaleX(-1); /* Mirror effect only for display */
-        }
-
-        #loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            z-index: 20;
-            font-size: 1.5rem;
-            letter-spacing: 3px;
-            animation: pulse 1.5s infinite;
-            text-align: center;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 0.5; }
-            50% { opacity: 1; }
-            100% { opacity: 0.5; }
-        }
-
-        .controls-hint {
-            font-size: 0.8rem;
-            color: #888;
-            margin-top: 10px;
-            font-style: italic;
-        }
-
-        /* HR HUD (top right) */
-        #hr-layer {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            z-index: 10;
-            pointer-events: none;
-        }
-
-        .hr-panel {
-            min-width: 200px;
-            text-align: right;
-        }
-
-        .hr-label {
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.18em;
-            color: rgba(255,255,255,0.7);
-            margin-bottom: 4px;
-        }
-
-        #hr-value {
-            font-size: 1.6rem;
-            font-weight: 600;
-            color: #ffffff;
-        }
-
-        .hr-sub {
-            font-size: 0.75rem;
-            color: rgba(255,255,255,0.5);
-            margin-top: 4px;
+        /* Loading Spinner */
+        #loader {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; z-index: 20; font-size: 24px; pointer-events: none;
         }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
 </head>
 <body>
 
-    <div id="loading">INITIALIZING BIO-SYSTEM...<br><span style="font-size:0.8rem">Allow Camera Access</span></div>
+    <div id="loader">Initializing AI Models...</div>
 
     <div id="ui-layer">
-        <div class="glass-panel">
-            <h1>Bio-Synthesis</h1>
-            <p>Symbolic Particle Heart</p>
-            
-            <div class="status-indicator">
-                <div id="cam-dot" class="dot"></div>
-                <span id="status-text">Waiting for camera...</span>
-            </div>
-
-            <div class="metric-bar">
-                <div id="tension-bar" class="metric-fill"></div>
-            </div>
-            
-            <div class="controls-hint">
-                Open hand: Field dispersed<br>
-                Closed fist: Heart locks &amp; PPG from forehead only
-            </div>
-        </div>
+        <div class="bpm-label">Heart Rate</div>
+        <div class="bpm-value" id="bpm-display">--</div>
+        <div class="status" id="ppg-status">Acquiring signal...</div>
     </div>
 
-    <!-- HR HUD -->
-    <div id="hr-layer">
-        <div class="glass-panel hr-panel">
-            <div class="hr-label">Heart Rate</div>
-            <div id="hr-value">--</div>
-            <div class="hr-sub">PPG (forehead)</div>
-        </div>
+    <div id="cam-container">
+        <video id="input-video" playsinline></video>
+        <canvas id="overlay-canvas"></canvas>
     </div>
 
-    <!-- Main 3D Container -->
     <div id="canvas-container"></div>
 
-    <!-- Webcam feed -->
-    <video id="input-video" playsinline></video>
-    
-    <div class="webcam-preview">
-        <canvas id="preview-canvas"></canvas>
-    </div>
-
 <script>
-    // --- Configuration ---
-    const PARTICLE_COUNT = 12000;
-    const CAM_FOV = 60;
-    const FIST_TENSION_THRESHOLD = 0.8; // when we consider the fist "clenched"
+/**
+ * PART 1: THREE.JS PARTICLE SYSTEM
+ */
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x050505, 0.002);
 
-    // --- Global State ---
-    let handTension = 0; // 0 = open, 1 = closed
-    let targetTension = 0;
-    let handPresence = false;
-    let time = 0;
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.z = 30;
 
-    // HR / PPG state
-    let ppgSamples = [];         // { t, v }
-    let hrBPM = 0;
-    let lastHRComputeTime = 0;
-    const PPG_WINDOW_SEC = 10;
-    const PPG_MIN_SEC = 5;
-    let hrActive = false;        // only true when fist is clenched
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.getElementById('canvas-container').appendChild(renderer.domElement);
 
-    // --- 3D Scene Setup ---
-    const container = document.getElementById('canvas-container');
-    const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x050505, 0.02);
+// Particle Configuration
+const particleCount = 15000;
+const geometry = new THREE.BufferGeometry();
+const positions = new Float32Array(particleCount * 3);
+const colors = new Float32Array(particleCount * 3);
+const targetPositions = new Float32Array(particleCount * 3); // Heart shape
+const randomPositions = new Float32Array(particleCount * 3); // Exploded shape
 
-    const camera = new THREE.PerspectiveCamera(
-        CAM_FOV,
-        window.innerWidth / window.innerHeight,
-        0.1,
-        100
-    );
-    camera.position.z = 9;
-    camera.position.y = 0.8;
+const color1 = new THREE.Color(0xff3366); // Heart Red
+const color2 = new THREE.Color(0x44aaff); // Sci-fi Blue
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    container.appendChild(renderer.domElement);
+// Initialize Particles
+for (let i = 0; i < particleCount; i++) {
+    // 1. Create Heart Shape (Parametric Equations)
+    // x = 16sin^3(t)
+    // y = 13cos(t) - 5cos(2t) - 2cos(3t) - cos(4t)
+    const t = Math.random() * Math.PI * 2;
+    const u = Math.random() * Math.PI * 2; // For volume
+    
+    // Basic heart curve
+    let x = 16 * Math.pow(Math.sin(t), 3);
+    let y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+    let z = (Math.random() - 0.5) * 5; // Thin volume
+    
+    // Scale down to fit camera
+    x *= 0.5; y *= 0.5; z *= 0.5;
 
-    // --- Particle System (Classic Heart Symbol) ---
+    targetPositions[i * 3] = x;
+    targetPositions[i * 3 + 1] = y;
+    targetPositions[i * 3 + 2] = z;
 
-    function createParticleTexture() {
-        const canvas = document.createElement('canvas');
-        canvas.width = 32;
-        canvas.height = 32;
-        const ctx = canvas.getContext('2d');
-        const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-        grad.addColorStop(0, 'rgba(255,255,255,1)');
-        grad.addColorStop(0.4, 'rgba(255,255,255,0.5)');
-        grad.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, 32, 32);
-        const texture = new THREE.Texture(canvas);
-        texture.needsUpdate = true;
-        return texture;
-    }
+    // 2. Create Random/Exploded State
+    randomPositions[i * 3] = (Math.random() - 0.5) * 60;
+    randomPositions[i * 3 + 1] = (Math.random() - 0.5) * 60;
+    randomPositions[i * 3 + 2] = (Math.random() - 0.5) * 60;
 
-    // Classic heart symbol using implicit equation in 2D (x,y),
-    // then extruded slightly in z for volume:
-    // (x^2 + y^2 - 1)^3 - x^2 y^3 <= 0
-    function randomPointInSymbolHeart() {
-        while (true) {
-            const x = (Math.random() * 2 - 1) * 1.2;
-            const y = (Math.random() * 2 - 1) * 1.2;
-            const z = (Math.random() * 2 - 1) * 0.4; // thickness
+    // Start at random
+    positions[i * 3] = randomPositions[i * 3];
+    positions[i * 3 + 1] = randomPositions[i * 3 + 1];
+    positions[i * 3 + 2] = randomPositions[i * 3 + 2];
 
-            const a = x * x + y * y - 1;
-            const f = a * a * a - x * x * y * y * y;
+    colors[i * 3] = color2.r;
+    colors[i * 3 + 1] = color2.g;
+    colors[i * 3 + 2] = color2.b;
+}
 
-            if (f <= 0) {
-                return {
-                    x: x * 1.5,
-                    y: y * 1.5,
-                    z: z * 1.0
-                };
-            }
-        }
-    }
+geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(PARTICLE_COUNT * 3);
-    const targetPositions = new Float32Array(PARTICLE_COUNT * 3);
-    const colors = new Float32Array(PARTICLE_COUNT * 3);
-    const sizes = new Float32Array(PARTICLE_COUNT);
-    const randomness = new Float32Array(PARTICLE_COUNT * 3);
+const material = new THREE.PointsMaterial({
+    size: 0.2,
+    vertexColors: true,
+    blending: THREE.AdditiveBlending,
+    depthTest: false,
+    transparent: true,
+    opacity: 0.8
+});
 
-    const colorCells = new THREE.Color(0x00d2ff);
-    const colorOrgans = new THREE.Color(0xff0055);
+const particles = new THREE.Points(geometry, material);
+scene.add(particles);
 
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-        const p = randomPointInSymbolHeart();
+// State Variables
+let handClosedAmount = 0; // 0 = Open (Exploded), 1 = Closed (Heart)
+let currentBPM = 60;
+let beatTime = 0;
 
-        targetPositions[i * 3]     = p.x;
-        targetPositions[i * 3 + 1] = p.y;
-        targetPositions[i * 3 + 2] = p.z;
+/**
+ * PART 2: COMPUTER VISION & LOGIC
+ */
+const videoElement = document.getElementById('input-video');
+const canvasElement = document.getElementById('overlay-canvas');
+const canvasCtx = canvasElement.getContext('2d');
+const bpmDisplay = document.getElementById('bpm-display');
+const ppgStatus = document.getElementById('ppg-status');
 
-        positions[i * 3]     = (Math.random() - 0.5) * 20;
-        positions[i * 3 + 1] = (Math.random() - 0.5) * 20;
-        positions[i * 3 + 2] = (Math.random() - 0.5) * 15;
+// PPG Variables
+let foreheadGreenValues = [];
+let lastBeatTime = 0;
+const maxBuffer = 150; // Buffer for signal processing
+let ppgCanvas; // Offscreen canvas to read pixels
+let ppgCtx;
 
-        colors[i * 3]     = colorCells.r;
-        colors[i * 3 + 1] = colorCells.g;
-        colors[i * 3 + 2] = colorCells.b;
+function setupPPG() {
+    ppgCanvas = document.createElement('canvas');
+    ppgCanvas.width = 100; // Low res is fine for color averaging
+    ppgCanvas.height = 100;
+    ppgCtx = ppgCanvas.getContext('2d');
+}
+setupPPG();
 
-        sizes[i] = 0.5 + Math.random() * 0.5;
+// --- Face Mesh for PPG ---
+const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+faceMesh.setOptions({ maxNumFaces: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
-        randomness[i*3]   = (Math.random() - 0.5);
-        randomness[i*3+1] = (Math.random() - 0.5);
-        randomness[i*3+2] = (Math.random() - 0.5);
-    }
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-
-    const material = new THREE.PointsMaterial({
-        size: 0.1,
-        vertexColors: true,
-        map: createParticleTexture(),
-        transparent: true,
-        opacity: 0.85,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending
-    });
-
-    const particles = new THREE.Points(geometry, material);
-    particles.rotation.x = -0.2;
-    scene.add(particles);
-
-    // --- MediaPipe + Webcam ---
-    const videoElement = document.getElementById('input-video');
-    const previewCanvas = document.getElementById('preview-canvas');
-    const previewCtx = previewCanvas.getContext('2d');
-
-    previewCanvas.width = 320;
-    previewCanvas.height = 240;
-
-    // PPG aggregator
-    function addPPGSample(avgG, nowSec) {
-        ppgSamples.push({ t: nowSec, v: avgG });
-        while (ppgSamples.length > 0 && (nowSec - ppgSamples[0].t) > PPG_WINDOW_SEC) {
-            ppgSamples.shift();
-        }
-        if (nowSec - lastHRComputeTime > 1.0) {
-            computeHeartRateFromPPG(nowSec);
-            lastHRComputeTime = nowSec;
-        }
-    }
-
-    function computeHeartRateFromPPG(nowSec) {
-        if (ppgSamples.length < 2) return;
-
-        const tFirst = ppgSamples[0].t;
-        const tLast = ppgSamples[ppgSamples.length - 1].t;
-        const duration = tLast - tFirst;
-        if (duration < PPG_MIN_SEC) return;
-
-        const values = ppgSamples.map(s => s.v);
-        const mean = values.reduce((a, b) => a + b, 0) / values.length;
-        const detrended = values.map(v => v - mean);
-
-        const variance = detrended.reduce((a,v)=>a+v*v,0)/detrended.length;
-        const std = Math.sqrt(variance);
-        const threshold = std * 0.5;
-
-        let peaks = 0;
-        for (let i = 1; i < detrended.length - 1; i++) {
-            if (
-                detrended[i] > detrended[i - 1] &&
-                detrended[i] > detrended[i + 1] &&
-                detrended[i] > threshold
-            ) {
-                peaks++;
-            }
-        }
-        if (peaks < 1) return;
-
-        const bpm = (peaks / duration) * 60;
-        if (bpm >= 40 && bpm <= 180) {
-            hrBPM = Math.round(bpm);
-            document.getElementById('hr-value').textContent = hrBPM + " bpm";
-        }
-    }
-
-    // --- HANDS: tension & gating (no PPG from fist now) ---
-    function onResultsHands(results) {
-        const nowSec = performance.now() / 1000;
-
-        previewCtx.save();
-        previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
-        previewCtx.drawImage(results.image, 0, 0, previewCanvas.width, previewCanvas.height);
-
-        handPresence = false;
-
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-            handPresence = true;
-            document.getElementById('status-text').innerText = "Hands Detected";
-            document.getElementById('cam-dot').classList.add('active');
-
-            let totalTension = 0;
-            let handCount = 0;
-
-            for (const landmarks of results.multiHandLandmarks) {
-                drawConnectors(previewCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 1});
-                drawLandmarks(previewCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 2});
-
-                const wrist = landmarks[0];
-                const tips = [8, 12, 16, 20];
-                let avgTipDist = 0;
-                
-                tips.forEach(idx => {
-                    const tip = landmarks[idx];
-                    const dist = Math.sqrt(
-                        Math.pow(tip.x - wrist.x, 2) +
-                        Math.pow(tip.y - wrist.y, 2) +
-                        Math.pow(tip.z - wrist.z, 2)
-                    );
-                    avgTipDist += dist;
-                });
-                avgTipDist /= 4;
-
-                const openVal = 0.35;
-                const closedVal = 0.15;
-                let t = (openVal - avgTipDist) / (openVal - closedVal);
-                t = Math.max(0, Math.min(1, t));
-
-                totalTension += t;
-                handCount++;
-            }
-
-            targetTension = totalTension / handCount;
-
-            // Fist clenched?
-            hrActive = targetTension >= FIST_TENSION_THRESHOLD;
-
-            if (!hrActive) {
-                ppgSamples = [];
-                hrBPM = 0;
-                document.getElementById('hr-value').textContent = "--";
-            }
-
-        } else {
-            document.getElementById('status-text').innerText = "Searching for hands...";
-            document.getElementById('cam-dot').classList.remove('active');
-            targetTension = 0;
-            hrActive = false;
-            ppgSamples = [];
-            hrBPM = 0;
-            document.getElementById('hr-value').textContent = "--";
-        }
-
-        previewCtx.restore();
-    }
-
-    // --- FACE: forehead PPG ROI (only when hrActive) ---
-    function onResultsFace(results) {
-        if (!hrActive) return; // only care when fist is clenched
-
-        const nowSec = performance.now() / 1000;
-
-        if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-            return;
-        }
-
+faceMesh.onResults((results) => {
+    if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
         const landmarks = results.multiFaceLandmarks[0];
-
-        // Compute face bounding box
-        let minX = 1, minY = 1, maxX = 0, maxY = 0;
-        for (const lm of landmarks) {
-            if (lm.x < minX) minX = lm.x;
-            if (lm.x > maxX) maxX = lm.x;
-            if (lm.y < minY) minY = lm.y;
-            if (lm.y > maxY) maxY = lm.y;
-        }
-
-        const faceWidth  = maxX - minX;
-        const faceHeight = maxY - minY;
-        const centerX = (minX + maxX) / 2;
-
-        // Forehead: upper chunk of the face bounding box
-        const foreheadHeightNorm = faceHeight * 0.25;
-        const foreheadWidthNorm  = faceWidth  * 0.5;
-
-        const foreheadMinX = centerX - foreheadWidthNorm / 2;
-        const foreheadMaxX = centerX + foreheadWidthNorm / 2;
-        const foreheadMinY = minY; // near top of face
-        const foreheadMaxY = minY + foreheadHeightNorm;
-
-        let x0 = Math.floor(Math.max(0, foreheadMinX) * previewCanvas.width);
-        let y0 = Math.floor(Math.max(0, foreheadMinY) * previewCanvas.height);
-        let w  = Math.floor(Math.min(1, foreheadMaxX) * previewCanvas.width  - x0);
-        let h  = Math.floor(Math.min(1, foreheadMaxY) * previewCanvas.height - y0);
-
-        w = Math.max(4, Math.min(previewCanvas.width  - x0, w));
-        h = Math.max(4, Math.min(previewCanvas.height - y0, h));
-
-        if (w <= 0 || h <= 0) return;
-
-        // Grab PPG from forehead region
-        const imgData = previewCtx.getImageData(x0, y0, w, h);
-        const data = imgData.data;
-
-        let sumG = 0, count = 0;
-        for (let i = 0; i < data.length; i += 4) {
-            sumG += data[i + 1];
-            count++;
-        }
-        if (count > 0) {
-            const avgG = sumG / count;
-            addPPGSample(avgG, nowSec);
-        }
-
-        // Draw forehead ROI on top
-        previewCtx.save();
-        previewCtx.strokeStyle = '#FF00FF';
-        previewCtx.lineWidth = 2;
-        previewCtx.strokeRect(x0, y0, w, h);
-        previewCtx.restore();
-    }
-
-    // --- Set up MediaPipe Hands & FaceMesh ---
-
-    const hands = new Hands({locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-    }});
-
-    hands.setOptions({
-        maxNumHands: 2,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
-    });
-    hands.onResults(onResultsHands);
-
-    const faceMesh = new FaceMesh({locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
-    }});
-
-    faceMesh.setOptions({
-        maxNumFaces: 1,
-        refineLandmarks: true,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
-    });
-    faceMesh.onResults(onResultsFace);
-
-    const cameraUtils = new Camera(videoElement, {
-        onFrame: async () => {
-            const image = videoElement;
-            await hands.send({ image });
-            await faceMesh.send({ image });
-        },
-        width: 640,
-        height: 480
-    });
-
-    cameraUtils.start()
-        .then(() => {
-            document.getElementById('loading').style.display = 'none';
-        })
-        .catch(err => {
-            document.getElementById('loading').innerText = "Camera Access Denied";
-            console.error(err);
-        });
-
-    // --- Animation Loop ---
-    function animate() {
-        requestAnimationFrame(animate);
         
-        time += 0.01;
+        // Extract Forehead Region (approximate indices)
+        // Mid-forehead is around index 10, 338, 297, 332
+        const foreheadPoint = landmarks[151]; // Center forehead
+        
+        // Draw Overlay (Forehead dot)
+        const x = foreheadPoint.x * canvasElement.width;
+        const y = foreheadPoint.y * canvasElement.height;
+        
+        canvasCtx.fillStyle = '#00ff00';
+        canvasCtx.beginPath();
+        canvasCtx.arc(x, y, 3, 0, 2 * Math.PI);
+        canvasCtx.fill();
 
-        // Smooth tension
-        handTension += (targetTension - handTension) * 0.1;
-
-        // Tension bar UI
-        const bar = document.getElementById('tension-bar');
-        bar.style.width = `${handTension * 100}%`;
-
-        const currentR = THREE.MathUtils.lerp(colorCells.r, colorOrgans.r, handTension);
-        const currentG = THREE.MathUtils.lerp(colorCells.g, colorOrgans.g, handTension);
-        const currentB = THREE.MathUtils.lerp(colorCells.b, colorOrgans.b, handTension);
-        bar.style.background = `rgb(${currentR*255}, ${currentG*255}, ${currentB*255})`;
-
-        const positionsArray = geometry.attributes.position.array;
-        const colorsArray = geometry.attributes.color.array;
-
-        const isFist = handTension >= FIST_TENSION_THRESHOLD;
-        const noiseAmplitude = THREE.MathUtils.lerp(2.0, 0.04, handTension);
-        const baseFormStrength = isFist ? 0.22 : 0.02;
-
-        // Heart pulsation (beats at measured HR if available)
-        const bpm = hrBPM > 0 ? hrBPM : 60;
-        const beatsPerSec = bpm / 60;
-        const phase = time * beatsPerSec * Math.PI * 2;
-        const beatWave = (Math.sin(phase) + 1) / 2;
-        const beatAmp = THREE.MathUtils.lerp(0.02, 0.12, handTension);
-        const scale = 1.0 + beatWave * beatAmp;
-        particles.scale.set(scale, scale, scale);
-
-        particles.rotation.y = Math.sin(time * 0.2) * 0.25;
-        particles.rotation.z = Math.sin(time * 0.1) * 0.1;
-
-        for (let i = 0; i < PARTICLE_COUNT; i++) {
-            const ix = i * 3;
-            const iy = i * 3 + 1;
-            const iz = i * 3 + 2;
-
-            const tx = targetPositions[ix];
-            const ty = targetPositions[iy];
-            const tz = targetPositions[iz];
-
-            let cx = positionsArray[ix];
-            let cy = positionsArray[iy];
-            let cz = positionsArray[iz];
-
-            const dx = tx - cx;
-            const dy = ty - cy;
-            const dz = tz - cz;
-
-            if (isFist) {
-                // Strong pull into classic heart when fully tensioned
-                cx += dx * baseFormStrength;
-                cy += dy * baseFormStrength;
-                cz += dz * baseFormStrength;
-            } else {
-                // Lower tension: soft convergence + drift
-                const driftX = Math.sin(time + randomness[ix] * 10) * 0.02;
-                const driftY = Math.cos(time + randomness[iy] * 10) * 0.02;
-
-                cx += dx * 0.01 + driftX;
-                cy += dy * 0.01 + driftY;
-                cz += dz * 0.01;
+        // --- PPG SIGNAL EXTRACTION ---
+        // Crop a small area around the forehead from the video feed
+        // Note: Video coordinates need mapping
+        const vidW = videoElement.videoWidth;
+        const vidH = videoElement.videoHeight;
+        const cropX = Math.floor(foreheadPoint.x * vidW);
+        const cropY = Math.floor(foreheadPoint.y * vidH);
+        
+        if (cropX > 0 && cropY > 0) {
+            // Draw video frame to offscreen canvas
+            ppgCtx.drawImage(videoElement, cropX - 10, cropY - 10, 20, 20, 0, 0, 20, 20);
+            const frameData = ppgCtx.getImageData(0, 0, 20, 20);
+            
+            // Average Green Channel
+            let avgGreen = 0;
+            for (let i = 0; i < frameData.data.length; i += 4) {
+                avgGreen += frameData.data[i + 1];
             }
+            avgGreen /= (frameData.data.length / 4);
 
-            // Living jitter
-            cx += (Math.random() - 0.5) * noiseAmplitude * 0.08;
-            cy += (Math.random() - 0.5) * noiseAmplitude * 0.08;
-            cz += (Math.random() - 0.5) * noiseAmplitude * 0.08;
+            processPPGSignal(avgGreen);
+        }
+    } else {
+        ppgStatus.innerText = "Face not detected";
+    }
+});
 
-            positionsArray[ix] = cx;
-            positionsArray[iy] = cy;
-            positionsArray[iz] = cz;
+// --- Simple Peak Detection for PPG ---
+function processPPGSignal(value) {
+    const now = performance.now();
+    foreheadGreenValues.push({ val: value, time: now });
+    if (foreheadGreenValues.length > maxBuffer) foreheadGreenValues.shift();
 
-            colorsArray[ix]   = currentR + (Math.random() * 0.05 * handTension);
-            colorsArray[iy]   = currentG;
-            colorsArray[iz]   = currentB;
+    if (foreheadGreenValues.length < 30) return; // Wait for buffer
+
+    // Detrend: Calculate moving average
+    let sum = 0;
+    foreheadGreenValues.forEach(v => sum += v.val);
+    const avg = sum / foreheadGreenValues.length;
+
+    // Check for peak
+    // A simplified algorithm: look for zero-crossing or local maxima above average
+    const currentVal = foreheadGreenValues[foreheadGreenValues.length - 1].val;
+    const prevVal = foreheadGreenValues[foreheadGreenValues.length - 2].val;
+    const prevPrevVal = foreheadGreenValues[foreheadGreenValues.length - 3].val;
+
+    // Peak detection logic
+    // We are looking for a local maximum
+    if (prevVal > currentVal && prevVal > prevPrevVal && prevVal > avg + 0.5) {
+        // Potential beat
+        const timeDiff = now - lastBeatTime;
+        if (timeDiff > 400 && timeDiff < 1500) { // Limit to 40-150 BPM range
+            const instantBPM = 60000 / timeDiff;
+            // Smooth the BPM
+            currentBPM = Math.round(currentBPM * 0.7 + instantBPM * 0.3);
+            bpmDisplay.innerText = currentBPM;
+            ppgStatus.innerText = "Signal Locked";
+            
+            // Trigger Visual Beat
+            triggerHeartBeat();
+        }
+        lastBeatTime = now;
+    }
+}
+
+function triggerHeartBeat() {
+    beatTime = 1.0; // Reset beat animation scalar
+}
+
+
+// --- Hands for Gesture Control ---
+const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+hands.setOptions({ maxNumHands: 2, minDetectionConfidence: 0.7, minTrackingConfidence: 0.5 });
+
+hands.onResults((results) => {
+    // Clear Overlay
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    
+    // Draw Hand Overlay
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        let totalClosedFactor = 0;
+
+        for (const landmarks of results.multiHandLandmarks) {
+            drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 1});
+            drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 0.5, radius: 2});
+
+            // Calculate "Closedness"
+            // Measure distance between Wrist (0) and Middle Finger Tip (12)
+            const wrist = landmarks[0];
+            const tip = landmarks[12];
+            const base = landmarks[9]; // Middle finger MCP
+
+            // Euclidian distance roughly
+            const handSize = Math.hypot(base.x - wrist.x, base.y - wrist.y);
+            const openDist = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
+            
+            // Ratio: If Tip is close to Wrist compared to palm size -> Closed
+            // Normal open hand ratio ~ 1.8 to 2.0
+            // Closed fist ratio ~ 0.8 to 1.0
+            
+            let ratio = openDist / handSize;
+            // Map 1.8 -> 0 (Open), 1.0 -> 1 (Closed)
+            let closed = (1.8 - ratio) / 0.8;
+            closed = Math.max(0, Math.min(1, closed)); // Clamp
+            
+            totalClosedFactor += closed;
         }
 
-        geometry.attributes.position.needsUpdate = true;
-        geometry.attributes.color.needsUpdate = true;
+        // Smooth transition
+        const targetFactor = totalClosedFactor / results.multiHandLandmarks.length; // Average if 2 hands
+        handClosedAmount += (targetFactor - handClosedAmount) * 0.1; // Lerp
+    } else {
+        // If no hands, slowly drift to open
+        handClosedAmount += (0 - handClosedAmount) * 0.05;
+    }
+});
 
-        renderer.render(scene, camera);
+// --- Camera Setup ---
+const cameraObj = new Camera(videoElement, {
+    onFrame: async () => {
+        await faceMesh.send({image: videoElement});
+        await hands.send({image: videoElement});
+    },
+    width: 640,
+    height: 480
+});
+cameraObj.start()
+    .then(() => document.getElementById('loader').style.display = 'none')
+    .catch(err => console.error("Camera Error:", err));
+
+
+/**
+ * PART 3: ANIMATION LOOP
+ */
+function animate() {
+    requestAnimationFrame(animate);
+
+    // Update Particles
+    const positionsAttribute = geometry.attributes.position;
+    const colorsAttribute = geometry.attributes.color;
+
+    // Decay beat animation
+    beatTime = Math.max(0, beatTime - 0.05);
+    // Easing for beat: A quick expansion and slow contraction
+    const beatScale = 1 + (Math.sin(beatTime * Math.PI) * 0.2 * handClosedAmount); // Beat only visible when heart forms
+
+    const time = Date.now() * 0.001;
+    scene.rotation.y = time * 0.1;
+
+    for (let i = 0; i < particleCount; i++) {
+        // Interpolate Positions based on Hand Gesture
+        const rx = randomPositions[i * 3];
+        const ry = randomPositions[i * 3 + 1];
+        const rz = randomPositions[i * 3 + 2];
+
+        // Target (Heart) with Beat Scaling applied
+        const tx = targetPositions[i * 3] * beatScale;
+        const ty = targetPositions[i * 3 + 1] * beatScale;
+        const tz = targetPositions[i * 3 + 2] * beatScale;
+
+        // Current Position LERP
+        const cx = rx + (tx - rx) * handClosedAmount;
+        const cy = ry + (ty - ry) * handClosedAmount;
+        const cz = rz + (tz - rz) * handClosedAmount;
+
+        // Add some noise/wobble
+        const noise = Math.sin(time * 2 + i) * 0.05 * (1 - handClosedAmount);
+        
+        positionsAttribute.setXYZ(i, cx + noise, cy + noise, cz + noise);
+
+        // Interpolate Colors
+        // Open: Blue, Closed: Red
+        const r = color2.r + (color1.r - color2.r) * handClosedAmount;
+        const g = color2.g + (color1.g - color2.g) * handClosedAmount;
+        const b = color2.b + (color1.b - color2.b) * handClosedAmount;
+
+        // Make it brighter on beat
+        const brightness = 1 + beatTime * 0.5;
+
+        colorsAttribute.setXYZ(i, r * brightness, g * brightness, b * brightness);
     }
 
-    window.addEventListener('resize', () => {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+    positionsAttribute.needsUpdate = true;
+    colorsAttribute.needsUpdate = true;
 
-    animate();
+    // UI Canvas Resizing
+    if (canvasElement.width !== videoElement.videoWidth) {
+        canvasElement.width = videoElement.videoWidth;
+        canvasElement.height = videoElement.videoHeight;
+    }
+
+    renderer.render(scene, camera);
+}
+
+animate();
+
+// Handle Resize
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
 </script>
 </body>
 </html>
