@@ -51,7 +51,6 @@
         <h3>System Ready</h3>
         <p>Make a <strong>fist</strong> to form the heart and start HR.</p>
         <p>Relax or open your hand to dissipate the particles.</p>
-        <p>Use two hands to scale the heart.</p>
     </div>
 
     <div id="hr-container">
@@ -105,6 +104,7 @@ geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
  * Build a SOLID CLASSIC HEART SHAPE as a fixed 3D template.
  * - Use implicit heart equation in 2D: (x^2 + y^2 - 1)^3 - x^2 y^3 <= 0
  * - Then extrude in Z for volume.
+ * - Orientation: lobes UP, point DOWN.
  */
 (function initHeartShape() {
     const scaleXY = 9.0;   // scale for x,y
@@ -114,10 +114,9 @@ geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     while (generated < PARTICLE_COUNT) {
         const i3 = generated * 3;
 
-        // Rejection sampling in a bounding box
-        // Slightly taller in Y for a nice aspect
-        const x2d = (Math.random() * 2 - 1);      // -1..1
-        const y2d = (Math.random() * 2 - 1.2);    // -1.2..0.8
+        // Rejection sampling in a symmetric bounding box
+        const x2d = (Math.random() * 2 - 1);         // -1..1
+        const y2d = (Math.random() * 2.4 - 1.2);     // -1.2..1.2
 
         // Implicit heart test
         const x2 = x2d * x2d;
@@ -132,7 +131,7 @@ geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
         // Inside heart – accept, scale & extrude
         const x = x2d * scaleXY;
-        const y = -y2d * scaleXY; // flip Y so the lobes are up
+        const y = y2d * scaleXY; // upright: lobes up, point down
         const z = (Math.random() * 2 - 1) * scaleZ;
 
         heartBasePositions[i3]     = x;
@@ -172,7 +171,6 @@ scene.add(particleSystem);
 let handDetected = false;
 let lastHandTime = 0;
 let heartActive = false;     // true when fist is detected
-let sceneScale = 1.0;
 
 // Heartbeat animation state
 let currentBpm = 60;         // smoothed BPM for animation
@@ -192,24 +190,7 @@ function onResults(results) {
         handDetected = true;
         lastHandTime = Date.now();
 
-        // 1. Scene scaling from two-hand span or one-hand "tension"
-        if (hands.length === 2) {
-            const dx = hands[0][0].x - hands[1][0].x;
-            const dy = hands[0][0].y - hands[1][0].y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            const targetScale = Math.max(0.5, Math.min(3.0, dist * 4));
-            sceneScale = sceneScale * 0.9 + targetScale * 0.1;
-        } else {
-            const wrist = hands[0][0];
-            const middleTip = hands[0][12];
-            const tension = Math.sqrt(
-                Math.pow(wrist.x - middleTip.x, 2) +
-                Math.pow(wrist.y - middleTip.y, 2)
-            );
-            sceneScale = sceneScale * 0.9 + (0.7 + tension * 2) * 0.1;
-        }
-
-        // 2. Gesture detection for FIST (heart on) vs other (heart off)
+        // Gesture detection for FIST (heart on) vs other (heart off)
         const lm = hands[0];
 
         const isFingerCurled = (tipIdx, pipIdx) => {
@@ -424,27 +405,22 @@ function animate() {
         const i3 = i * 3;
 
         if (heartActive && !dissipating) {
-            // Move towards HEART shape, scaled + beating
-            const targetX =
-                heartBasePositions[i3] * sceneScale * beatScale;
-            const targetY =
-                heartBasePositions[i3 + 1] * sceneScale * beatScale;
-            const targetZ =
-                heartBasePositions[i3 + 2] * sceneScale * beatScale;
+            // Move towards HEART shape, scaled only by heartbeat
+            const targetX = heartBasePositions[i3] * beatScale;
+            const targetY = heartBasePositions[i3 + 1] * beatScale;
+            const targetZ = heartBasePositions[i3 + 2] * beatScale;
 
-            positionsArray[i3] += (targetX - positionsArray[i3]) * 0.16;
-            positionsArray[i3 + 1] +=
-                (targetY - positionsArray[i3 + 1]) * 0.16;
-            positionsArray[i3 + 2] +=
-                (targetZ - positionsArray[i3 + 2]) * 0.16;
+            positionsArray[i3]     += (targetX - positionsArray[i3]) * 0.16;
+            positionsArray[i3 + 1] += (targetY - positionsArray[i3 + 1]) * 0.16;
+            positionsArray[i3 + 2] += (targetZ - positionsArray[i3 + 2]) * 0.16;
 
             // Prep velocities for next dispersion phase
-            velocities[i3] = (Math.random() - 0.5) * 0.4;
+            velocities[i3]     = (Math.random() - 0.5) * 0.4;
             velocities[i3 + 1] = (Math.random() - 0.5) * 0.4;
             velocities[i3 + 2] = (Math.random() - 0.5) * 0.4;
         } else {
             // Dissipated / cloud state
-            positionsArray[i3] += velocities[i3];
+            positionsArray[i3]     += velocities[i3];
             positionsArray[i3 + 1] += velocities[i3 + 1] - 0.01; // gentle "fall"
             positionsArray[i3 + 2] += velocities[i3 + 2];
 
@@ -453,21 +429,15 @@ function animate() {
             if (positionsArray[i3] > r || positionsArray[i3] < -r) {
                 velocities[i3] *= -0.7;
             }
-            if (
-                positionsArray[i3 + 1] > r ||
-                positionsArray[i3 + 1] < -r
-            ) {
+            if (positionsArray[i3 + 1] > r || positionsArray[i3 + 1] < -r) {
                 velocities[i3 + 1] *= -0.7;
             }
-            if (
-                positionsArray[i3 + 2] > r ||
-                positionsArray[i3 + 2] < -r
-            ) {
+            if (positionsArray[i3 + 2] > r || positionsArray[i3 + 2] < -r) {
                 velocities[i3 + 2] *= -0.7;
             }
 
             // Gentle random walk
-            velocities[i3] += (Math.random() - 0.5) * 0.01;
+            velocities[i3]     += (Math.random() - 0.5) * 0.01;
             velocities[i3 + 1] += (Math.random() - 0.5) * 0.01;
             velocities[i3 + 2] += (Math.random() - 0.5) * 0.01;
         }
