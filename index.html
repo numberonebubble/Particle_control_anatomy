@@ -19,6 +19,10 @@
         #bpm-display { font-size: 3rem; font-weight: bold; }
         #bpm-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 2px; }
 
+        /* Respiration UI */
+        #resp-display { font-size: 1.6rem; font-weight: bold; margin-top: 8px; }
+        #resp-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 2px; opacity: 0.8; }
+
         /* UI Overlay - Webcam (Bottom Right) */
         #webcam-container {
             position: absolute; bottom: 20px; right: 20px;
@@ -37,7 +41,7 @@
             color: rgba(255, 255, 255, 0.7); pointer-events: none;
         }
 
-        /* Hidden Canvas for PPG processing */
+        /* Hidden Canvas for PPG / respiration processing */
         #ppg-canvas { display: none; }
     </style>
     
@@ -56,6 +60,8 @@
     <div id="hr-container">
         <div id="bpm-display">--</div>
         <div id="bpm-label">Heart Rate (BPM)</div>
+        <div id="resp-display">--</div>
+        <div id="resp-label">Respiration (Br/Min)</div>
     </div>
 
     <div id="webcam-container">
@@ -207,14 +213,14 @@ let lastFrameTime = performance.now();
 const videoElement = document.getElementById('input_video');
 
 function onResults(results) {
-    const hands = results.multiHandLandmarks;
+    const handsResults = results.multiHandLandmarks;
 
-    if (hands && hands.length > 0) {
+    if (handsResults && handsResults.length > 0) {
         handDetected = true;
         lastHandTime = Date.now();
 
         // Gesture detection for FIST (heart on) vs other (heart off)
-        const lm = hands[0];
+        const lm = handsResults[0];
 
         const isFingerCurled = (tipIdx, pipIdx) => {
             const dTip = Math.sqrt(
@@ -270,6 +276,7 @@ hands.onResults(onResults);
 const ppgCanvas = document.getElementById('ppg-canvas');
 const ppgCtx = ppgCanvas.getContext('2d', { willReadFrequently: true });
 const bpmDisplay = document.getElementById('bpm-display');
+const respDisplay = document.getElementById('resp-display');
 
 const signalBuffer = [];
 const BUFFER_SIZE = 240; // ~8s at 30 fps – more stable
@@ -278,7 +285,7 @@ let lastBpmCalcTime = 0;
 const BPM_UPDATE_INTERVAL = 900; // ms between BPM calculations
 
 function processPPG() {
-    if (videoElement.paused || videoElement.ended) return;
+    if (videoElement.paused || videoElement.ended || videoElement.videoWidth === 0) return;
 
     ppgCanvas.width = videoElement.videoWidth;
     ppgCanvas.height = videoElement.videoHeight;
@@ -385,11 +392,168 @@ function calculateBPM() {
 
 
 /**
- * PART 4: CAMERA + HANDS + PPG LOOP
+ * PART 4: RESPIRATION ESTIMATION (CHEST ROI, MOTION-BASED)
+ */
+const respSignalBuffer = [];
+const RESP_BUFFER_SIZE = 300; // ~10s at 30fps
+let currentRespRate = 0;
+let lastRespCalcTime = 0;
+const RESP_UPDATE_INTERVAL = 1500; // ms
+let recentRespRates = [];
+
+function processRespiration() {
+    if (videoElement.paused || videoElement.ended || videoElement.videoWidth === 0) return;
+
+    // Use same canvas as PPG – draw current frame
+    ppgCanvas.width = videoElement.videoWidth;
+    ppgCanvas.height = videoElement.videoHeight;
+    ppgCtx.drawImage(videoElement, 0, 0, ppgCanvas.width, ppgCanvas.height);
+
+    // Chest ROI: central, lower-mid area
+    const chestX = Math.floor(ppgCanvas.width * 0.35);
+    const chestY = Math.floor(ppgCanvas.height * 0.45);
+    const chestW = Math.floor(ppgCanvas.width * 0.30);
+    const chestH = Math.floor(ppgCanvas.height * 0.40);
+
+    const frameData = ppgCtx.getImageData(chestX, chestY, chestW, chestH);
+    const data = frameData.data;
+
+    const rows = chestH;
+    const cols = chestW;
+    const rowSums = new Array(rows).fill(0);
+
+    // Project luminance onto vertical axis and compute center-of-mass
+    for (let y = 0; y < rows; y++) {
+        let rowSum = 0;
+        for (let x = 0; x < cols; x++) {
+            const idx = (y * cols + x) * 4;
+            const r = data[idx];
+            const g = data[idx + 1];
+            const b = data[idx + 2];
+            const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+            rowSum += lum;
+        }
+        rowSums[y] = rowSum;
+    }
+
+    let total = 0;
+    let weightedSum = 0;
+    for (let y = 0; y < rows; y++) {
+        total += rowSums[y];
+        weightedSum += rowSums[y] * y;
+    }
+
+    let centerY = rows / 2;
+    if (total > 0) {
+        centerY = weightedSum / total;
+    }
+
+    const now = Date.now();
+    respSignalBuffer.push({ t: now, val: centerY });
+    if (respSignalBuffer.length > RESP_BUFFER_SIZE) respSignalBuffer.shift();
+
+    if (
+        respSignalBuffer.length === RESP_BUFFER_SIZE &&
+        now - lastRespCalcTime > RESP_UPDATE_INTERVAL
+    ) {
+        calculateRespirationRate();
+        lastRespCalcTime = now;
+    }
+}
+
+function calculateRespirationRate() {
+    const values = respSignalBuffer.map((s) => s.val);
+
+    // Detrend with moving average (acts as high-pass)
+    const windowSize = 25;
+    const cleanSignal = [];
+    for (let i = 0; i < values.length; i++) {
+        let sum = 0;
+        let count = 0;
+        for (
+            let j = Math.max(0, i - windowSize);
+            j < Math.min(values.length, i + windowSize);
+            j++
+        ) {
+            sum += values[j];
+            count++;
+        }
+        cleanSignal.push(values[i] - sum / count);
+    }
+
+    // Soft low-pass by smoothing the detrended signal a bit
+    const smoothSignal = [];
+    const smoothWin = 3;
+    for (let i = 0; i < cleanSignal.length; i++) {
+        let sum = 0;
+        let count = 0;
+        for (
+            let j = Math.max(0, i - smoothWin);
+            j <= Math.min(cleanSignal.length - 1, i + smoothWin);
+            j++
+        ) {
+            sum += cleanSignal[j];
+            count++;
+        }
+        smoothSignal.push(sum / count);
+    }
+
+    // Dynamic threshold
+    const mean =
+        smoothSignal.reduce((a, b) => a + b, 0) / smoothSignal.length;
+    const variance =
+        smoothSignal.reduce((a, b) => a + Math.pow(b - mean, 2), 0) /
+        smoothSignal.length;
+    const std = Math.sqrt(variance);
+    const threshold = mean + 0.3 * std;
+
+    const peakTimes = [];
+    for (let i = 1; i < smoothSignal.length - 1; i++) {
+        if (
+            smoothSignal[i] > smoothSignal[i - 1] &&
+            smoothSignal[i] > smoothSignal[i + 1] &&
+            smoothSignal[i] > threshold
+        ) {
+            peakTimes.push(respSignalBuffer[i].t);
+        }
+    }
+
+    if (peakTimes.length < 2) return;
+
+    const intervals = [];
+    for (let i = 1; i < peakTimes.length; i++) {
+        intervals.push((peakTimes[i] - peakTimes[i - 1]) / 1000); // seconds
+    }
+    const avgInterval =
+        intervals.reduce((a, b) => a + b, 0) / intervals.length;
+
+    if (avgInterval <= 0) return;
+
+    let brpm = 60 / avgInterval; // breaths per minute
+
+    // Physiological sanity bounds
+    if (brpm < 4 || brpm > 40) return;
+
+    // Smooth respiration rate
+    recentRespRates.push(brpm);
+    if (recentRespRates.length > 6) recentRespRates.shift();
+    const avgResp =
+        recentRespRates.reduce((a, b) => a + b, 0) / recentRespRates.length;
+
+    currentRespRate = currentRespRate * 0.7 + avgResp * 0.3;
+    respDisplay.innerText = Math.round(currentRespRate);
+}
+
+
+/**
+ * PART 5: CAMERA + HANDS + PPG + RESPIRATION LOOP
  */
 const cameraUtils = new Camera(videoElement, {
     onFrame: async () => {
         await hands.send({ image: videoElement });
+
+        // Always track respiration motion from chest
+        processRespiration();
 
         // Only run PPG when the heart is active (fist)
         if (heartActive) {
@@ -403,7 +567,7 @@ cameraUtils.start();
 
 
 /**
- * PART 5: ANIMATION LOOP – HEART FORMATION + BEATING
+ * PART 6: ANIMATION LOOP – HEART FORMATION + BEATING
  * No rotation anywhere, just morphing between cloud and heart.
  */
 function animate() {
@@ -468,9 +632,6 @@ function animate() {
     }
 
     geometry.attributes.position.needsUpdate = true;
-
-    // No rotation at all:
-    // particleSystem.rotation.set(0, 0, 0);
 
     renderer.render(scene, camera);
 }
