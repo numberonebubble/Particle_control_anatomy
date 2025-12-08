@@ -3,468 +3,507 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Immersive Particle World</title>
-    
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-
+    <title>Wilderness First Response: Interactive Story</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; color: white; }
-        
-        /* Mirror video for natural interaction */
-        #input-video { position: absolute; opacity: 0; pointer-events: none; transform: scaleX(-1); }
-        
-        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
-
-        /* HUD - Left Side */
-        #hud {
-            position: absolute; top: 0; left: 0; bottom: 0; width: 300px;
-            background: linear-gradient(90deg, rgba(0,10,20,0.9), rgba(0,0,0,0));
-            z-index: 10; padding: 40px 20px;
-            display: flex; flex-direction: column; justify-content: center; gap: 30px;
-            pointer-events: none;
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Courier New', Courier, monospace; /* HUD style font */
+            color: white;
         }
 
-        h1 { 
-            font-size: 1.5rem; text-transform: uppercase; letter-spacing: 4px; 
-            color: #fff; text-shadow: 0 0 10px #00d2ff; margin-bottom: 20px; 
-            border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom: 10px;
+        #input_video {
+            position: absolute;
+            top: 0; left: 0; opacity: 0; pointer-events: none; z-index: -1;
         }
 
-        .control-group { margin-bottom: 20px; }
-        .group-label { font-size: 0.8rem; color: #8899aa; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; }
-
-        .gesture-item {
-            display: flex; align-items: center; gap: 15px;
-            padding: 12px; margin-bottom: 8px;
-            border-left: 2px solid rgba(255,255,255,0.1);
-            background: rgba(255,255,255,0.02);
-            transition: all 0.3s ease;
+        /* Cinematic HUD Overlay */
+        #hud-container {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80%;
+            max-width: 700px;
+            z-index: 10;
+            text-align: center;
         }
 
-        .gesture-item.active {
-            border-left: 4px solid #00d2ff;
-            background: linear-gradient(90deg, rgba(0, 210, 255, 0.2), transparent);
-            text-shadow: 0 0 8px rgba(0, 210, 255, 0.8);
+        #story-box {
+            background: rgba(10, 20, 30, 0.85);
+            border: 2px solid #00d2ff;
+            border-radius: 4px;
+            padding: 25px;
+            box-shadow: 0 0 20px rgba(0, 210, 255, 0.2);
+            position: relative;
         }
 
-        .icon { font-size: 1.5rem; width: 30px; text-align: center; }
-        .desc { font-size: 0.9rem; font-weight: bold; }
-        .sub { font-size: 0.7rem; color: #aaa; display: block; }
-
-        /* Power Bar */
-        #power-container {
-            width: 100%; height: 8px; background: #222; border-radius: 4px; overflow: hidden;
-        }
-        #power-fill {
-            height: 100%; width: 0%; background: #00d2ff;
-            box-shadow: 0 0 15px #00d2ff; transition: width 0.1s;
+        h1 {
+            font-size: 1.1rem;
+            color: #ff3333; /* Alert Red */
+            margin: 0 0 10px 0;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            border-bottom: 1px solid #ff3333;
+            padding-bottom: 5px;
+            display: inline-block;
         }
 
-        #loading {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            font-size: 2rem; letter-spacing: 5px; animation: pulse 1s infinite; z-index: 100;
+        #narrative {
+            font-size: 1.1rem;
+            line-height: 1.5;
+            color: #e0e0e0;
+            margin-bottom: 20px;
+            min-height: 60px;
         }
-        @keyframes pulse { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
+
+        #instruction {
+            font-size: 1.3rem;
+            font-weight: bold;
+            color: #00d2ff;
+            background: rgba(0, 210, 255, 0.1);
+            padding: 10px;
+            border-radius: 4px;
+        }
+
+        /* Progress Bar for "Holding" the gesture */
+        #progress-container {
+            width: 100%;
+            height: 6px;
+            background: #333;
+            margin-top: 15px;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        #progress-bar {
+            width: 0%;
+            height: 100%;
+            background: #00d2ff;
+            transition: width 0.1s linear;
+        }
+
+        #status-icon {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 2rem;
+            opacity: 0.8;
+        }
+
+        #loader {
+            position: absolute;
+            top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #00d2ff; font-size: 1.5rem;
+        }
     </style>
 </head>
 <body>
 
-    <div id="loading">INITIALIZING WORLD...</div>
-
-    <div id="hud">
-        <div>
-            <h1>Particle<br>Engine</h1>
-            
-            <div class="control-group">
-                <div class="group-label">Left Hand (Energy)</div>
-                <div class="gesture-item" id="state-power">
-                    <div class="icon">✊</div>
-                    <div>
-                        <span class="desc">CLOSE FIST</span>
-                        <span class="sub">Condense Matter</span>
-                    </div>
-                </div>
-                <div style="margin-top:10px;">
-                    <div class="group-label">Cohesion Level</div>
-                    <div id="power-container"><div id="power-fill"></div></div>
-                </div>
-            </div>
-
-            <div class="control-group">
-                <div class="group-label">Right Hand (Shape)</div>
-                
-                <div class="gesture-item active" id="btn-patient">
-                    <div class="icon">✋</div>
-                    <div>
-                        <span class="desc">PATIENT</span>
-                        <span class="sub">Open Hand</span>
-                    </div>
-                </div>
-
-                <div class="gesture-item" id="btn-medic">
-                    <div class="icon">☝️</div>
-                    <div>
-                        <span class="desc">MEDIC</span>
-                        <span class="sub">Point Finger</span>
-                    </div>
-                </div>
-
-                <div class="gesture-item" id="btn-amb">
-                    <div class="icon">✊</div>
-                    <div>
-                        <span class="desc">AMBULANCE</span>
-                        <span class="sub">Closed Fist</span>
-                    </div>
-                </div>
+    <div id="hud-container">
+        <div id="story-box">
+            <h1 id="chapter-title">INITIALIZING...</h1>
+            <div id="status-icon">⚠️</div>
+            <p id="narrative">Loading Neural Networks for Bio-Scan...</p>
+            <div id="instruction">Please Wait</div>
+            <div id="progress-container">
+                <div id="progress-bar"></div>
             </div>
         </div>
     </div>
 
-    <div id="canvas-container"></div>
-    <video id="input-video" playsinline></video>
+    <div id="loader">Booting Medical Interface...</div>
+    <video id="input_video"></video>
 
-<script>
-    // --- Constants ---
-    const PARTICLE_COUNT = 25000;
-    
-    // --- State ---
-    const MODES = { PATIENT: 0, MEDIC: 1, AMBULANCE: 2 };
-    let currentMode = MODES.PATIENT;
-    let cohesion = 0; // 0 = Dissipated, 1 = Formed
-    
-    // --- Colors ---
-    const C_SKIN = new THREE.Color(0xffccaa);
-    const C_BLUE = new THREE.Color(0x0088ff);
-    const C_WHITE = new THREE.Color(0xffffff);
-    const C_RED = new THREE.Color(0xff2222);
-    const C_GREY = new THREE.Color(0x555555);
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-    // --- 3D Setup ---
-    const container = document.getElementById('canvas-container');
-    const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x000000, 0.02);
-
-    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-    camera.position.set(0, 1, 12);
-    camera.lookAt(0, 0, 0);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    container.appendChild(renderer.domElement);
-
-    // --- Particle System ---
-    const geometry = new THREE.BufferGeometry();
-    
-    // Base State (Current positions)
-    const positions = new Float32Array(PARTICLE_COUNT * 3);
-    const colors = new Float32Array(PARTICLE_COUNT * 3);
-    
-    // Chaos State (Where they explode to)
-    const chaosPos = new Float32Array(PARTICLE_COUNT * 3);
-    
-    // Morph Target Information: Each particle knows its destination for ALL 3 shapes
-    // This allows instant morphing without recalculating arrays
-    const targetPatient = new Float32Array(PARTICLE_COUNT * 3);
-    const colorPatient = new Float32Array(PARTICLE_COUNT * 3);
-    
-    const targetMedic = new Float32Array(PARTICLE_COUNT * 3);
-    const colorMedic = new Float32Array(PARTICLE_COUNT * 3);
-    
-    const targetAmb = new Float32Array(PARTICLE_COUNT * 3);
-    const colorAmb = new Float32Array(PARTICLE_COUNT * 3);
-
-    // Metadata for animation (e.g., is this particle part of the Medic's arm?)
-    const metaData = new Float32Array(PARTICLE_COUNT); // 0=Static, 1=Arm, 2=Lights, 3=Chest
-
-    // --- Shape Generation Helpers ---
-
-    function setPoint(arr, colArr, i, x, y, z, cObj) {
-        arr[i*3] = x; arr[i*3+1] = y; arr[i*3+2] = z;
-        colArr[i*3] = cObj.r; colArr[i*3+1] = cObj.g; colArr[i*3+2] = cObj.b;
-    }
-
-    // Volumetric Box
-    function fillBox(arr, colArr, start, count, w, h, d, yOff, color, metaTag=0) {
-        for(let i=0; i<count; i++) {
-            const idx = start + i;
-            const x = (Math.random()-0.5) * w;
-            const y = (Math.random()-0.5) * h + yOff;
-            const z = (Math.random()-0.5) * d;
-            setPoint(arr, colArr, idx, x, y, z, color);
-            metaData[idx] = metaTag;
-        }
-    }
-
-    // Volumetric Sphere
-    function fillSphere(arr, colArr, start, count, rad, xOff, yOff, zOff, color, metaTag=0) {
-        for(let i=0; i<count; i++) {
-            const idx = start + i;
-            const u = Math.random(); const v = Math.random();
-            const theta = 2 * Math.PI * u; const phi = Math.acos(2 * v - 1);
-            const r = rad * Math.cbrt(Math.random());
-            const x = xOff + r * Math.sin(phi) * Math.cos(theta);
-            const y = yOff + r * Math.sin(phi) * Math.sin(theta);
-            const z = zOff + r * Math.cos(phi);
-            setPoint(arr, colArr, idx, x, y, z, color);
-            metaData[idx] = metaTag; // Use this to identify body parts
-        }
-    }
-
-    // --- Build Models ---
-
-    // 1. PATIENT (Lying down)
-    let offset = 0;
-    // Head
-    fillSphere(targetPatient, colorPatient, offset, 2000, 0.7, -2.5, -2, 0, C_SKIN); offset+=2000;
-    // Torso (Chest tag for breathing)
-    fillBox(targetPatient, colorPatient, offset, 8000, 3.0, 1.2, 1.5, -2, C_BLUE, 3); offset+=8000;
-    // Legs
-    fillBox(targetPatient, colorPatient, offset, 8000, 3.5, 0.8, 1.2, -2, C_WHITE); 
-    // Shift legs right
-    for(let i=offset; i<offset+8000; i++) targetPatient[i*3] += 3.5; 
-    offset+=8000;
-    // Remainder noise
-    fillBox(targetPatient, colorPatient, offset, PARTICLE_COUNT-offset, 8, 0.5, 4, -3, C_GREY);
-
-    // 2. MEDIC (Kneeling, CPR pose)
-    offset = 0;
-    // Head
-    fillSphere(targetMedic, colorMedic, offset, 2000, 0.6, 0, 1.0, 0, C_SKIN); offset+=2000;
-    // Torso
-    fillBox(targetMedic, colorMedic, offset, 6000, 1.2, 1.5, 1.0, -0.2, C_BLUE); offset+=6000;
-    // Legs (Kneeling)
-    fillBox(targetMedic, colorMedic, offset, 5000, 1.4, 1.5, 1.2, -1.5, C_GREY); offset+=5000;
-    // Arms (Tagged 1 for motion)
-    fillBox(targetMedic, colorMedic, offset, 5000, 2.5, 0.4, 0.4, 0, C_SKIN, 1); 
-    // Orient arms forward
-    for(let i=offset; i<offset+5000; i++) {
-        const tempX = targetMedic[i*3];
-        targetMedic[i*3] = 0; // Center X
-        targetMedic[i*3+1] = 0.5; // Shoulder height
-        targetMedic[i*3+2] = 0.5 + Math.abs(tempX); // Project forward
-    }
-    offset+=5000;
-    // Remainder
-    fillBox(targetMedic, colorMedic, offset, PARTICLE_COUNT-offset, 5, 0.1, 5, -2, C_GREY);
-
-
-    // 3. AMBULANCE (Vehicle)
-    offset = 0;
-    // Body
-    fillBox(targetAmb, colorAmb, offset, 12000, 6.0, 2.5, 2.8, -0.5, C_WHITE); offset+=12000;
-    // Wheels
-    fillSphere(targetAmb, colorAmb, offset, 1000, 0.8, -2, -2, 1.5, C_GREY); offset+=1000;
-    fillSphere(targetAmb, colorAmb, offset, 1000, 0.8, 2, -2, 1.5, C_GREY); offset+=1000;
-    fillSphere(targetAmb, colorAmb, offset, 1000, 0.8, -2, -2, -1.5, C_GREY); offset+=1000;
-    fillSphere(targetAmb, colorAmb, offset, 1000, 0.8, 2, -2, -1.5, C_GREY); offset+=1000;
-    // Lights (Tagged 2 for flashing)
-    fillSphere(targetAmb, colorAmb, offset, 2000, 0.5, 0, 1.2, 0, C_RED, 2); offset+=2000;
-    // Remainder
-    fillBox(targetAmb, colorAmb, offset, PARTICLE_COUNT-offset, 1, 1, 1, 0, C_GREY);
-
-    // --- Init Chaos & Geometry ---
-    for(let i=0; i<PARTICLE_COUNT; i++) {
-        // Random space dust
-        chaosPos[i*3] = (Math.random()-0.5) * 25;
-        chaosPos[i*3+1] = (Math.random()-0.5) * 15;
-        chaosPos[i*3+2] = (Math.random()-0.5) * 10;
+    <script>
+        // --- 1. Story Engine Configuration ---
         
-        positions[i*3] = chaosPos[i*3];
-        positions[i*3+1] = chaosPos[i*3+1];
-        positions[i*3+2] = chaosPos[i*3+2];
-        
-        colors[i*3] = 0; colors[i*3+1] = 0; colors[i*3+2] = 0;
-    }
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-    const material = new THREE.PointsMaterial({
-        size: 0.1, vertexColors: true, transparent: true, opacity: 0.9, 
-        blending: THREE.AdditiveBlending, depthWrite: false
-    });
-    const particleSystem = new THREE.Points(geometry, material);
-    scene.add(particleSystem);
-
-    // --- Animation Logic ---
-    let time = 0;
-
-    function animate() {
-        requestAnimationFrame(animate);
-        time += 0.05;
-
-        const posAttr = geometry.attributes.position.array;
-        const colAttr = geometry.attributes.color.array;
-
-        // Select active arrays based on mode
-        let tPos, tCol;
-        if (currentMode === MODES.PATIENT) { tPos = targetPatient; tCol = colorPatient; }
-        else if (currentMode === MODES.MEDIC) { tPos = targetMedic; tCol = colorMedic; }
-        else { tPos = targetAmb; tCol = colorAmb; }
-
-        for(let i=0; i<PARTICLE_COUNT; i++) {
-            const ix = i*3, iy = i*3+1, iz = i*3+2;
-            const meta = metaData[i];
-
-            // 1. Calculate Animated Target Position (Living World)
-            let tx = tPos[ix];
-            let ty = tPos[iy];
-            let tz = tPos[iz];
-
-            if (cohesion > 0.5) { // Only animate if formed
-                if (currentMode === MODES.MEDIC && meta === 1) { 
-                    // CPR Motion (Arms moving down and up)
-                    const pump = Math.sin(time * 8) * 0.2; // Fast pumping
-                    ty += pump; 
-                    tz += pump * 0.5;
-                }
-                else if (currentMode === MODES.PATIENT && meta === 3) {
-                    // Breathing (Chest rising)
-                    ty += Math.sin(time * 2) * 0.1;
-                }
-                else if (currentMode === MODES.AMBULANCE) {
-                    // Hover/Vibrate
-                    ty += Math.sin(time * 10) * 0.05;
-                }
+        // The narrative follows standard Emergency Response Protocols
+        const STORY_STAGES = [
+            {
+                title: "Chapter 1: The Scene",
+                narrative: "You arrive at the ravine. The hiker is lying unconscious at the bottom. The environment is chaotic, visibility is low. You need to secure the scene before approaching.",
+                instruction: "Make a 'Open Palm' (High Five) to clear the fog and scan.",
+                trigger: "open",
+                shape: "cloud", // Random chaos
+                color: [0.5, 0.5, 0.5] // Grey fog
+            },
+            {
+                title: "Chapter 2: Massive Hemorrhage",
+                narrative: "SCAN COMPLETE. Patient has a severe arterial bleed on the right leg. Bright red blood is spurting. Immediate action required. Tourniquet application necessary.",
+                instruction: "Make a 'Fist' to apply pressure and tighten the tourniquet.",
+                trigger: "fist",
+                shape: "artery", // A pulsing cylinder
+                color: [1.0, 0.0, 0.0] // Red blood
+            },
+            {
+                title: "Chapter 3: Airway & Breathing",
+                narrative: "Bleeding controlled. Checking Vitals. The patient is not breathing effectively. The chest is not rising. You suspect a tension pneumothorax or obstruction.",
+                instruction: "Use 'Two Hands' (pull apart) to expand the lungs/chest cavity.",
+                trigger: "two_hands",
+                shape: "lungs", // Two spheres
+                color: [0.0, 0.8, 1.0] // Cyan Oxygen
+            },
+            {
+                title: "Chapter 4: Circulation (Pulse)",
+                narrative: "Airway is clear. Breathing assisted. Now monitoring heart rate. Pulse is thready and weak. We need to stabilize cardiac rhythm and keep them warm.",
+                instruction: "Make a 'Thumb Up' to stabilize the heart rate.",
+                trigger: "thumb",
+                shape: "heart", // Heart shape
+                color: [1.0, 0.2, 0.5] // Pink/Red
+            },
+            {
+                title: "Chapter 5: Fracture Stabilization",
+                narrative: "Vitals stable. Secondary survey reveals a compound fracture of the tibia. We must splint the leg to prevent further damage during transport.",
+                instruction: "Make a 'Peace Sign' to align the splint rigid supports.",
+                trigger: "peace",
+                shape: "splint", // A box/rectangular prism
+                color: [1.0, 0.8, 0.0] // Orange/Warning
+            },
+            {
+                title: "Chapter 6: Extraction",
+                narrative: "Patient packaged. Search and Rescue helicopter is inbound. Signal the pilot for the long-line extraction.",
+                instruction: "Point 'Index Finger' UP to guide the helicopter line.",
+                trigger: "point",
+                shape: "helix", // Double helix / Rotor
+                color: [0.0, 1.0, 0.0] // Green Success
+            },
+            {
+                title: "Mission Complete",
+                narrative: "Patient successfully extracted to Level 1 Trauma Center. Good work, Medic.",
+                instruction: "Rest. (Story Ended)",
+                trigger: "done",
+                shape: "sphere",
+                color: [1.0, 1.0, 1.0]
             }
+        ];
 
-            // 2. Interpolate between Chaos and Target based on Cohesion
-            const cx = chaosPos[ix] + (tx - chaosPos[ix]) * cohesion;
-            const cy = chaosPos[iy] + (ty - chaosPos[iy]) * cohesion;
-            const cz = chaosPos[iz] + (tz - chaosPos[iz]) * cohesion;
+        let currentStageIndex = 0;
+        let actionProgress = 0; // 0 to 100
+        const PROGRESS_SPEED = 1.5; // How fast the bar fills when holding gesture
+        const DECAY_SPEED = 2.0; // How fast it drops if you let go
 
-            // 3. Move actual position towards calculated position (Smoothing)
-            posAttr[ix] += (cx - posAttr[ix]) * 0.1;
-            posAttr[iy] += (cy - posAttr[iy]) * 0.1;
-            posAttr[iz] += (cz - posAttr[iz]) * 0.1;
+        // --- 2. Three.js Visuals ---
 
-            // 4. Color Logic
-            let r = tCol[ix], g = tCol[iy], b = tCol[iz];
-            
-            // Flashing Lights for Ambulance
-            if (currentMode === MODES.AMBULANCE && meta === 2) {
-                if (Math.sin(time * 10) > 0) { r=1; g=0; b=0; } // Red
-                else { r=0; g=0; b=1; } // Blue
-            }
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.02);
 
-            // Dim colors if dissipated
-            const brightness = 0.2 + (cohesion * 0.8);
-            colAttr[ix] += (r * brightness - colAttr[ix]) * 0.1;
-            colAttr[iy] += (g * brightness - colAttr[iy]) * 0.1;
-            colAttr[iz] += (b * brightness - colAttr[iz]) * 0.1;
-        }
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 25;
 
-        geometry.attributes.position.needsUpdate = true;
-        geometry.attributes.color.needsUpdate = true;
-        
-        // Rotate scene gently
-        scene.rotation.y = Math.sin(time * 0.05) * 0.1;
-
-        renderer.render(scene, camera);
-    }
-
-    animate();
-
-    // --- Hand Tracking ---
-    const videoElement = document.getElementById('input-video');
-
-    function calcTension(landmarks) {
-        const wrist = landmarks[0];
-        const tips = [8, 12, 16, 20];
-        let avg = 0;
-        tips.forEach(t => avg += Math.hypot(landmarks[t].x - wrist.x, landmarks[t].y - wrist.y));
-        return 1.0 - Math.min(1, Math.max(0, (avg/4 - 0.15) * 3)); // Normalize
-    }
-
-    function detectShapeGesture(landmarks) {
-        const isExt = (tip, pip) => landmarks[tip].y < landmarks[pip].y; // Simple Y check (upright hand)
-        // More robust: Distance from wrist
-        const d = (i) => Math.hypot(landmarks[i].x - landmarks[0].x, landmarks[i].y - landmarks[0].y);
-        
-        const iOut = d(8) > d(6);
-        const mOut = d(12) > d(10);
-        const rOut = d(16) > d(14);
-        const pOut = d(20) > d(18);
-
-        const count = [iOut, mOut, rOut, pOut].filter(Boolean).length;
-        
-        if (count === 4) return MODES.PATIENT; // Open
-        if (count === 1) return MODES.MEDIC;   // Point
-        if (count === 0) return MODES.AMBULANCE; // Fist
-        return null;
-    }
-
-    function onResults(results) {
-        let leftFound = false;
-        
-        if (results.multiHandLandmarks) {
-            for (let i = 0; i < results.multiHandLandmarks.length; i++) {
-                const label = results.multiHandedness[i].label;
-                const landmarks = results.multiHandLandmarks[i];
-
-                // NOTE: Camera is mirrored via CSS.
-                // MediaPipe 'Left' = User's LEFT hand (Mapped to Left HUD)
-                // MediaPipe 'Right' = User's RIGHT hand (Mapped to Right HUD)
-
-                if (label === 'Left') {
-                    // LEFT HAND: ENERGY (Cohesion)
-                    leftFound = true;
-                    const tension = calcTension(landmarks);
-                    // Smooth lerp for cohesion
-                    cohesion += (tension - cohesion) * 0.1;
-                    
-                    // UI Update
-                    const uiFill = document.getElementById('power-fill');
-                    uiFill.style.width = (cohesion * 100) + '%';
-                    const uiItem = document.getElementById('state-power');
-                    if(cohesion > 0.5) uiItem.classList.add('active'); else uiItem.classList.remove('active');
-                }
-                
-                if (label === 'Right') {
-                    // RIGHT HAND: SHAPE SELECTOR
-                    const detected = detectShapeGesture(landmarks);
-                    if (detected !== null) {
-                        currentMode = detected;
-                        
-                        // UI Update
-                        document.querySelectorAll('#hud .control-group:nth-child(2) .gesture-item').forEach(el => el.classList.remove('active'));
-                        if(currentMode === MODES.PATIENT) document.getElementById('btn-patient').classList.add('active');
-                        if(currentMode === MODES.MEDIC) document.getElementById('btn-medic').classList.add('active');
-                        if(currentMode === MODES.AMBULANCE) document.getElementById('btn-amb').classList.add('active');
-                    }
-                }
-            }
-        }
-
-        if (!leftFound) {
-            // Decay cohesion if left hand leaves
-            cohesion *= 0.95;
-            document.getElementById('power-fill').style.width = (cohesion * 100) + '%';
-            document.getElementById('state-power').classList.remove('active');
-        }
-    }
-
-    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-    hands.onResults(onResults);
-
-    const cameraUtils = new Camera(videoElement, {
-        onFrame: async () => { await hands.send({image: videoElement}); },
-        width: 640, height: 480
-    });
-    cameraUtils.start().then(() => document.getElementById('loading').style.display = 'none');
-    
-    window.addEventListener('resize', () => {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+        document.body.appendChild(renderer.domElement);
 
-</script>
+        // Particle Setup
+        const PARTICLE_COUNT = 12000;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(PARTICLE_COUNT * 3);
+        const colors = new Float32Array(PARTICLE_COUNT * 3);
+        const sizes = new Float32Array(PARTICLE_COUNT);
+
+        // Current color trackers for lerping
+        const currentColor = new THREE.Color(0x555555);
+        const targetColor = new THREE.Color(0x555555);
+
+        // Generate Target Shapes
+        const shapeTargets = {
+            cloud: [],
+            artery: [],
+            lungs: [],
+            heart: [],
+            splint: [],
+            helix: [],
+            sphere: []
+        };
+
+        // Initialize Particles & Calculate Shapes
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            // Initial Pos
+            positions[i * 3] = (Math.random() - 0.5) * 50;
+            positions[i * 3 + 1] = (Math.random() - 0.5) * 50;
+            positions[i * 3 + 2] = (Math.random() - 0.5) * 50;
+            
+            colors[i * 3] = 0.5;
+            colors[i * 3 + 1] = 0.5;
+            colors[i * 3 + 2] = 0.5;
+
+            sizes[i] = Math.random() * 0.2;
+
+            // 1. Cloud
+            shapeTargets.cloud.push((Math.random()-0.5)*30, (Math.random()-0.5)*20, (Math.random()-0.5)*20);
+
+            // 2. Artery (Cylinder with noise)
+            const angle = Math.random() * Math.PI * 2;
+            const r = 2 + Math.random() * 1; 
+            const h = (i / PARTICLE_COUNT) * 20 - 10;
+            shapeTargets.artery.push(r * Math.cos(angle), h, r * Math.sin(angle));
+
+            // 3. Lungs (Two Ellipsoids)
+            const side = (i % 2 === 0) ? 1 : -1;
+            const u = Math.random() * Math.PI * 2;
+            const v = Math.random() * Math.PI;
+            const lr = 4;
+            shapeTargets.lungs.push(
+                (lr * Math.sin(v) * Math.cos(u)) + (side * 4), // Offset x
+                (lr * 1.5 * Math.sin(v) * Math.sin(u)),        // Taller y
+                (lr * Math.cos(v))
+            );
+
+            // 4. Heart (Math Formula)
+            // x = 16sin^3(t), y = 13cos(t)-5cos(2t)-2cos(3t)-cos(4t)
+            // We need 3D, so we rotate it or layer it. Let's do a thick layering.
+            const t = Math.random() * Math.PI * 2;
+            const zOff = (Math.random() - 0.5) * 4;
+            const scale = 0.4;
+            const hx = 16 * Math.pow(Math.sin(t), 3);
+            const hy = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+            shapeTargets.heart.push(hx * scale, hy * scale, zOff);
+
+            // 5. Splint (Rectangular Prism)
+            const sx = (Math.random() - 0.5) * 6;
+            const sy = (Math.random() - 0.5) * 18;
+            const sz = (Math.random() - 0.5) * 6;
+            // Hollow it out slightly
+            if(Math.random() > 0.5) {
+                 shapeTargets.splint.push(sx, sy, sz); // Solid-ish
+            } else {
+                 // Define edges
+                 shapeTargets.splint.push((Math.round(Math.random())*6)-3, sy, (Math.random()-0.5)*6);
+            }
+
+            // 6. Helix (Rotor/Line)
+            const hIdx = i / PARTICLE_COUNT * 40; 
+            const hAngle = i * 0.2;
+            shapeTargets.helix.push(
+                3 * Math.cos(hAngle),
+                (i / PARTICLE_COUNT) * 30 - 15,
+                3 * Math.sin(hAngle)
+            );
+            
+            // 7. Sphere (End)
+            const phi = Math.acos((Math.random() * 2) - 1);
+            const theta = Math.random() * Math.PI * 2;
+            const sr = 6;
+            shapeTargets.sphere.push(
+                sr * Math.sin(phi) * Math.cos(theta),
+                sr * Math.sin(phi) * Math.sin(theta),
+                sr * Math.cos(phi)
+            );
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+        // Custom Shader Material for glow effect
+        const material = new THREE.PointsMaterial({
+            size: 0.3,
+            vertexColors: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            transparent: true,
+            opacity: 0.8
+        });
+
+        const particleSystem = new THREE.Points(geometry, material);
+        scene.add(particleSystem);
+
+
+        // --- 3. Animation & Logic Loop ---
+
+        let time = 0;
+        
+        function updateStoryUI() {
+            const stage = STORY_STAGES[currentStageIndex];
+            document.getElementById('chapter-title').innerText = stage.title;
+            document.getElementById('narrative').innerText = stage.narrative;
+            document.getElementById('instruction').innerText = "ACTION: " + stage.instruction;
+            
+            // Update target color
+            targetColor.setRGB(stage.color[0], stage.color[1], stage.color[2]);
+        }
+
+        function advanceStory() {
+            if (currentStageIndex < STORY_STAGES.length - 1) {
+                currentStageIndex++;
+                actionProgress = 0;
+                updateStoryUI();
+                
+                // Sound effect trigger could go here
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            time += 0.05;
+
+            const stageData = STORY_STAGES[currentStageIndex];
+            const targetPos = shapeTargets[stageData.shape];
+            const currentPos = geometry.attributes.position.array;
+            const currentCols = geometry.attributes.color.array;
+
+            // Lerp Color
+            currentColor.lerp(targetColor, 0.05);
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const ix = i * 3;
+                
+                // Position Morphing
+                let tx = targetPos[ix];
+                let ty = targetPos[ix+1];
+                let tz = targetPos[ix+2];
+
+                // Add "Life" animations based on stage
+                if (stageData.shape === 'heart') {
+                    // Pulse effect
+                    const beat = 1 + Math.sin(time * 3) * 0.1; // heartbeat
+                    tx *= beat; ty *= beat; tz *= beat;
+                } else if (stageData.shape === 'artery') {
+                    // Spurting flow effect
+                    ty += Math.sin(time + i) * 0.5;
+                } else if (stageData.shape === 'lungs') {
+                    // Breathing effect
+                    const breath = 1 + Math.sin(time) * 0.05;
+                    tx *= breath; ty *= breath; tz *= breath;
+                } else if (stageData.shape === 'helix') {
+                    // Spin effect needs rotation matrix, simplified here by system rotation
+                }
+
+                // Move particles
+                currentPos[ix] += (tx - currentPos[ix]) * 0.08;
+                currentPos[ix+1] += (ty - currentPos[ix+1]) * 0.08;
+                currentPos[ix+2] += (tz - currentPos[ix+2]) * 0.08;
+
+                // Color Update
+                currentCols[ix] = currentColor.r;
+                currentCols[ix+1] = currentColor.g;
+                currentCols[ix+2] = currentColor.b;
+            }
+
+            geometry.attributes.position.needsUpdate = true;
+            geometry.attributes.color.needsUpdate = true;
+
+            // Global Rotation
+            if (stageData.shape === 'helix') {
+                particleSystem.rotation.y -= 0.1; // Fast spin for chopper
+            } else {
+                particleSystem.rotation.y += 0.002; // Slow idle
+            }
+
+            // Progress Bar UI
+            const bar = document.getElementById('progress-bar');
+            bar.style.width = actionProgress + '%';
+
+            // Visual feedback for holding gesture
+            if (actionProgress > 0) {
+                particleSystem.rotation.z = (Math.random() - 0.5) * (actionProgress / 500); // Shake slightly when working
+            } else {
+                particleSystem.rotation.z = 0;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Initialize UI
+        updateStoryUI();
+        animate();
+
+
+        // --- 4. Computer Vision Logic ---
+        
+        function detectGesture(landmarks, handedness) {
+            // Simplified Gesture detection logic
+            const wrist = landmarks[0];
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+            const middleTip = landmarks[12];
+            const ringTip = landmarks[16];
+            const pinkyTip = landmarks[20];
+
+            const dist = (p1, p2) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
+            const isExtended = (tip, pip) => dist(landmarks[tip], wrist) > dist(landmarks[pip], wrist);
+
+            const iUp = isExtended(8, 6);
+            const mUp = isExtended(12, 10);
+            const rUp = isExtended(16, 14);
+            const pUp = isExtended(20, 18);
+            const tUp = isExtended(4, 2);
+
+            // FIST
+            if (!iUp && !mUp && !rUp && !pUp) return 'fist';
+            // OPEN PALM
+            if (iUp && mUp && rUp && pUp && tUp) return 'open';
+            // POINT
+            if (iUp && !mUp && !rUp && !pUp) return 'point';
+            // THUMB
+            if (tUp && !iUp && !mUp && !rUp && !pUp) return 'thumb';
+            // PEACE
+            if (iUp && mUp && !rUp && !pUp) return 'peace';
+            
+            return 'neutral';
+        }
+
+        const videoElement = document.getElementById('input_video');
+        const loader = document.getElementById('loader');
+
+        function onResults(results) {
+            loader.style.display = 'none';
+            
+            const stage = STORY_STAGES[currentStageIndex];
+            let detectedAction = null;
+
+            // 1. Detect Dual Hands first (Special case for Breathing stage)
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length === 2) {
+                const hand1 = results.multiHandLandmarks[0][9];
+                const hand2 = results.multiHandLandmarks[1][9];
+                const dist = Math.hypot(hand1.x - hand2.x, hand1.y - hand2.y);
+                
+                // If hands are apart and moving, trigger "two_hands"
+                if (dist > 0.3) detectedAction = 'two_hands';
+            }
+            
+            // 2. If no dual hand action, check single hand gestures
+            if (!detectedAction && results.multiHandLandmarks.length > 0) {
+                detectedAction = detectGesture(results.multiHandLandmarks[0]);
+            }
+
+            // 3. Game Logic: Check if detected matches required
+            if (detectedAction === stage.trigger) {
+                // Increase progress
+                actionProgress += PROGRESS_SPEED;
+                if (actionProgress >= 100) {
+                    advanceStory();
+                }
+            } else {
+                // Decay progress if they stop
+                if (actionProgress > 0) actionProgress -= DECAY_SPEED;
+                if (actionProgress < 0) actionProgress = 0;
+            }
+        }
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults(onResults);
+
+        const cameraFeed = new Camera(videoElement, {
+            onFrame: async () => await hands.send({image: videoElement}),
+            width: 640, height: 480
+        });
+        cameraFeed.start();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
 </body>
 </html>
