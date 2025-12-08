@@ -23,6 +23,15 @@
         #resp-display { font-size: 1.6rem; font-weight: bold; margin-top: 8px; }
         #resp-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 2px; opacity: 0.8; }
 
+        /* Quality text */
+        #hr-quality, #resp-quality {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.8;
+            margin-top: 4px;
+        }
+
         /* UI Overlay - Webcam (Bottom Right) */
         #webcam-container {
             position: absolute; bottom: 20px; right: 20px;
@@ -60,8 +69,11 @@
     <div id="hr-container">
         <div id="bpm-display">--</div>
         <div id="bpm-label">Heart Rate (BPM)</div>
+        <div id="hr-quality">HR Q: --</div>
+
         <div id="resp-display">--</div>
         <div id="resp-label">Respiration (Br/Min)</div>
+        <div id="resp-quality">Resp Q: --</div>
     </div>
 
     <div id="webcam-container">
@@ -73,6 +85,13 @@
     <canvas id="c"></canvas>
 
 <script>
+/**
+ * Small helper
+ */
+function clamp01(x) {
+    return Math.max(0, Math.min(1, x));
+}
+
 /**
  * PART 1: THREE.JS SETUP & PARTICLE SYSTEM
  */
@@ -108,9 +127,6 @@ geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
 /**
  * Build a SOLID, DENSE, UPRIGHT HEART as a 3D volume.
- * - Use implicit 2D heart equation: (x^2 + y^2 - 1)^3 - x^2 y^3 <= 0
- * - Sample on a 3D grid, keep only inside points
- * - Subsample to exactly PARTICLE_COUNT, so it looks visually "fully filled".
  */
 (function initHeartShape() {
     const scaleXY = 9.0;   // scale for x,y
@@ -159,7 +175,6 @@ geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     }
 
     // Subsample candidates evenly to fill exactly PARTICLE_COUNT slots.
-    // This gives a dense lattice-like fill with minimal visible gaps.
     for (let i = 0; i < PARTICLE_COUNT; i++) {
         const i3 = i * 3;
         const idx = Math.floor((i / (PARTICLE_COUNT - 1)) * (candidates.length - 1));
@@ -271,18 +286,24 @@ hands.onResults(onResults);
 
 
 /**
- * PART 3: PPG HEART RATE MONITOR (FOREHEAD ROI, STABLE BPM)
+ * PART 3: PPG HEART RATE MONITOR (FOREHEAD ROI, STABLE BPM + QUALITY)
  */
 const ppgCanvas = document.getElementById('ppg-canvas');
 const ppgCtx = ppgCanvas.getContext('2d', { willReadFrequently: true });
 const bpmDisplay = document.getElementById('bpm-display');
 const respDisplay = document.getElementById('resp-display');
+const hrQualityDisplay = document.getElementById('hr-quality');
+const respQualityDisplay = document.getElementById('resp-quality');
 
 const signalBuffer = [];
 const BUFFER_SIZE = 240; // ~8s at 30 fps – more stable
 let lastBPMPulses = [];
 let lastBpmCalcTime = 0;
 const BPM_UPDATE_INTERVAL = 900; // ms between BPM calculations
+
+let hrQuality = 0;
+let currentRespRate = 0;
+let respQuality = 0;
 
 function processPPG() {
     if (videoElement.paused || videoElement.ended || videoElement.videoWidth === 0) return;
@@ -341,7 +362,11 @@ function calculateBPM() {
         cleanSignal.push(values[i] - sum / count);
     }
 
-    // Dynamic threshold: mean + k * std
+    // Basic noise metrics for quality
+    const rawMean = values.reduce((a, b) => a + b, 0) / values.length;
+    const rawVar = values.reduce((a, b) => a + Math.pow(b - rawMean, 2), 0) / values.length;
+    const rawStd = Math.sqrt(rawVar);
+
     const mean =
         cleanSignal.reduce((a, b) => a + b, 0) / cleanSignal.length;
     const variance =
@@ -352,6 +377,7 @@ function calculateBPM() {
 
     // Peak times via local maxima
     const peakTimes = [];
+    const peakValues = [];
     for (let i = 1; i < cleanSignal.length - 1; i++) {
         if (
             cleanSignal[i] > cleanSignal[i - 1] &&
@@ -359,6 +385,7 @@ function calculateBPM() {
             cleanSignal[i] > threshold
         ) {
             peakTimes.push(signalBuffer[i].t);
+            peakValues.push(cleanSignal[i]);
         }
     }
 
@@ -388,15 +415,39 @@ function calculateBPM() {
 
     currentBpm = currentBpm * 0.7 + avgBpm * 0.3;
     bpmDisplay.innerText = Math.round(currentBpm);
+
+    // --- HR QUALITY METRIC ---
+    // 1) Amplitude / noise (SNR-like)
+    let peakMeanAmp = 0;
+    if (peakValues.length > 0) {
+        peakMeanAmp = peakValues.reduce((a, b) => a + b, 0) / peakValues.length;
+    }
+    const ampMetric = clamp01((peakMeanAmp / (std + 1e-6)) * 0.5); // scaled
+
+    // 2) Rhythm regularity
+    const intMean = avgInterval;
+    const intVar = intervals.reduce((a, b) => a + Math.pow(b - intMean, 2), 0) / intervals.length;
+    const intStd = Math.sqrt(intVar);
+    let rhythmMetric = 1 - (intStd / (intMean + 1e-6));
+    rhythmMetric = clamp01(rhythmMetric);
+
+    // 3) Raw vs clean std ratio (small if dominated by noise)
+    let stdRatio = 0;
+    if (rawStd > 1e-6) {
+        stdRatio = clamp01(std / rawStd);
+    }
+
+    const quality = clamp01(0.45 * ampMetric + 0.45 * rhythmMetric + 0.10 * stdRatio);
+    hrQuality = quality;
+    hrQualityDisplay.innerText = `HR Q: ${hrQuality.toFixed(2)}`;
 }
 
 
 /**
- * PART 4: RESPIRATION ESTIMATION (CHEST ROI, MOTION-BASED)
+ * PART 4: RESPIRATION ESTIMATION (CHEST ROI, MOTION-BASED + QUALITY)
  */
 const respSignalBuffer = [];
 const RESP_BUFFER_SIZE = 300; // ~10s at 30fps
-let currentRespRate = 0;
 let lastRespCalcTime = 0;
 const RESP_UPDATE_INTERVAL = 1500; // ms
 let recentRespRates = [];
@@ -508,6 +559,7 @@ function calculateRespirationRate() {
     const threshold = mean + 0.3 * std;
 
     const peakTimes = [];
+    const peakValues = [];
     for (let i = 1; i < smoothSignal.length - 1; i++) {
         if (
             smoothSignal[i] > smoothSignal[i - 1] &&
@@ -515,6 +567,7 @@ function calculateRespirationRate() {
             smoothSignal[i] > threshold
         ) {
             peakTimes.push(respSignalBuffer[i].t);
+            peakValues.push(smoothSignal[i]);
         }
     }
 
@@ -542,6 +595,33 @@ function calculateRespirationRate() {
 
     currentRespRate = currentRespRate * 0.7 + avgResp * 0.3;
     respDisplay.innerText = Math.round(currentRespRate);
+
+    // --- RESP QUALITY METRIC ---
+    // 1) Amplitude vs noise
+    let peakMeanAmp = 0;
+    if (peakValues.length > 0) {
+        peakMeanAmp = peakValues.reduce((a, b) => a + b, 0) / peakValues.length;
+    }
+    const ampMetric = clamp01((peakMeanAmp / (std + 1e-6)) * 0.5);
+
+    // 2) Rhythm regularity
+    const intMean = avgInterval;
+    const intVar = intervals.reduce((a, b) => a + Math.pow(b - intMean, 2), 0) / intervals.length;
+    const intStd = Math.sqrt(intVar);
+    let rhythmMetric = 1 - (intStd / (intMean + 1e-6));
+    rhythmMetric = clamp01(rhythmMetric);
+
+    // 3) Motion smoothness proxy: std of clean vs std of smooth
+    const cleanVar = cleanSignal.reduce((a, b) => a + Math.pow(b, 2), 0) / cleanSignal.length;
+    const cleanStd = Math.sqrt(cleanVar);
+    let smoothRatio = 0;
+    if (cleanStd > 1e-6) {
+        smoothRatio = clamp01(std / cleanStd);
+    }
+
+    const quality = clamp01(0.45 * ampMetric + 0.45 * rhythmMetric + 0.10 * smoothRatio);
+    respQuality = quality;
+    respQualityDisplay.innerText = `Resp Q: ${respQuality.toFixed(2)}`;
 }
 
 
@@ -568,7 +648,6 @@ cameraUtils.start();
 
 /**
  * PART 6: ANIMATION LOOP – HEART FORMATION + BEATING
- * No rotation anywhere, just morphing between cloud and heart.
  */
 function animate() {
     requestAnimationFrame(animate);
