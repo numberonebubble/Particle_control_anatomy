@@ -2,406 +2,379 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Bio-Interactive Particle System</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASL Particle Battle: 2 Player</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', sans-serif; }
+        #input_video { position: absolute; top: 0; left: 0; opacity: 0; pointer-events: none; z-index: -1; }
         
-        /* Main 3D Canvas */
-        #c { width: 100vw; height: 100vh; display: block; }
-
-        /* UI Overlay - Heart Rate (Top Right) */
-        #hr-container {
-            position: absolute; top: 20px; right: 20px;
-            color: #00ff88; background: rgba(0, 20, 10, 0.8);
-            padding: 15px; border-radius: 10px; border: 1px solid #00ff88;
-            text-align: right; pointer-events: none;
+        /* HUD Layout */
+        #hud {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; display: flex; flex-direction: column; justify-content: space-between;
         }
-        #bpm-display { font-size: 3rem; font-weight: bold; }
-        #bpm-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 2px; }
-
-        /* UI Overlay - Webcam (Bottom Right) */
-        #webcam-container {
-            position: absolute; bottom: 20px; right: 20px;
-            width: 240px; height: 180px;
-            border-radius: 10px; overflow: hidden;
-            border: 2px solid rgba(255, 255, 255, 0.2);
-            z-index: 10;
+        
+        /* Scores */
+        .score-panel {
+            position: absolute; top: 20px; padding: 15px 30px;
+            background: rgba(0,0,0,0.5); border-radius: 12px;
+            color: white; backdrop-filter: blur(5px); border: 1px solid rgba(255,255,255,0.1);
         }
-        #input_video {
-            width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1);
+        #p1-score { left: 20px; border-left: 5px solid #00d2ff; }
+        #p2-score { right: 20px; border-right: 5px solid #ff0055; text-align: right; }
+        .score-val { font-size: 2.5rem; font-weight: bold; display: block; }
+        .player-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 2px; opacity: 0.8; }
+
+        /* Central Game Message */
+        #center-msg {
+            text-align: center; margin-top: 15vh;
+            text-shadow: 0 0 20px rgba(0,0,0,0.8);
+        }
+        #target-word {
+            font-size: 4rem; font-weight: 900; color: #fff;
+            text-transform: uppercase; letter-spacing: 5px;
+            transition: transform 0.2s;
+        }
+        #sub-hint {
+            font-size: 1.5rem; color: #ffd700; margin-top: 10px;
+            background: rgba(0,0,0,0.6); display: inline-block; padding: 5px 15px; border-radius: 8px;
         }
 
-        /* Status / Instructions */
-        #status {
-            position: absolute; top: 20px; left: 20px;
-            color: rgba(255, 255, 255, 0.7); pointer-events: none;
+        /* Gestures Guide Bottom */
+        #guide {
+            display: flex; justify-content: center; gap: 40px; padding-bottom: 30px;
+            background: linear-gradient(to top, rgba(0,0,0,0.9), transparent);
         }
-
-        /* Hidden Canvas for PPG processing */
-        #ppg-canvas { display: none; }
+        .guide-item { text-align: center; color: rgba(255,255,255,0.6); }
+        .guide-icon { font-size: 1.5rem; display: block; margin-bottom: 5px; color: white;}
+        
+        /* Feedback */
+        .detected-gesture {
+            position: absolute; top: 120px; 
+            font-size: 1.2rem; font-weight: bold; opacity: 0; transition: opacity 0.3s;
+            background: rgba(255,255,255,0.1); padding: 5px 10px; border-radius: 4px; color: white;
+        }
+        #p1-detect { left: 20px; color: #00d2ff; }
+        #p2-detect { right: 20px; color: #ff0055; }
+        
     </style>
-    
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 </head>
 <body>
 
-    <div id="status">
-        <h3>System Ready</h3>
-        <p>Gestures: Open Hand (Sphere), Fist (Cube), Point (Torus)</p>
-        <p>Two Hands: Move apart to expand size.</p>
+    <div id="hud">
+        <div id="p1-score" class="score-panel">
+            <span class="player-label">Player 1</span>
+            <span class="score-val" id="s1">0</span>
+        </div>
+        <div id="p2-score" class="score-panel">
+            <span class="player-label">Player 2</span>
+            <span class="score-val" id="s2">0</span>
+        </div>
+
+        <div id="center-msg">
+            <div id="target-word">Loading...</div>
+            <div id="sub-hint">Please allow camera</div>
+        </div>
+
+        <div id="p1-detect" class="detected-gesture">Detected: None</div>
+        <div id="p2-detect" class="detected-gesture">Detected: None</div>
+
+        <div id="guide">
+            <div class="guide-item"><span class="guide-icon">✊ C</span>Cube</div>
+            <div class="guide-item"><span class="guide-icon">👌 O</span>Sphere</div>
+            <div class="guide-item"><span class="guide-icon">👆 L</span>Helix</div>
+            <div class="guide-item"><span class="guide-icon">✌️ V</span>Pyramid</div>
+        </div>
     </div>
 
-    <div id="hr-container">
-        <div id="bpm-display">--</div>
-        <div id="bpm-label">Heart Rate (BPM)</div>
-    </div>
+    <video id="input_video"></video>
 
-    <div id="webcam-container">
-        <video id="input_video" autoplay playsinline></video>
-    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-    <canvas id="ppg-canvas"></canvas>
-    
-    <canvas id="c"></canvas>
+    <script>
+        // --- Game Config & State ---
+        const TARGETS = [
+            { name: "CUBE",   letter: "C", shape: "cube" },
+            { name: "SPHERE", letter: "O", shape: "sphere" },
+            { name: "HELIX",  letter: "L", shape: "helix" },
+            { name: "PYRAMID",letter: "V", shape: "pyramid" }
+        ];
 
-<script>
-/**
- * PART 1: THREE.JS SETUP & PARTICLE SYSTEM
- */
-const canvas = document.querySelector('#c');
-const renderer = new THREE.WebGLRenderer({canvas, antialias: true, alpha: true});
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.z = 30;
-
-const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x000000, 0.02);
-
-// Particle Configuration
-const PARTICLE_COUNT = 8000;
-const geometry = new THREE.BufferGeometry();
-const positions = new Float32Array(PARTICLE_COUNT * 3);
-const targetPositions = new Float32Array(PARTICLE_COUNT * 3); // Where particles want to go
-const velocities = new Float32Array(PARTICLE_COUNT * 3); // For dissipation physics
-
-// Initialize generic random cloud
-for(let i = 0; i < PARTICLE_COUNT * 3; i++) {
-    positions[i] = (Math.random() - 0.5) * 50;
-    targetPositions[i] = positions[i];
-    velocities[i] = 0;
-}
-
-geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-// Material
-const textureLoader = new THREE.TextureLoader();
-// Generating a simple circle texture programmatically to avoid external asset dependency issues
-const circleCanvas = document.createElement('canvas');
-circleCanvas.width = 32; circleCanvas.height = 32;
-const ctx = circleCanvas.getContext('2d');
-ctx.beginPath();
-ctx.arc(16, 16, 15, 0, 2 * Math.PI);
-ctx.fillStyle = '#ffffff';
-ctx.fill();
-const sprite = new THREE.CanvasTexture(circleCanvas);
-
-const material = new THREE.PointsMaterial({
-    size: 0.3,
-    map: sprite,
-    color: 0x00ffff,
-    transparent: true,
-    opacity: 0.8,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false
-});
-
-const particleSystem = new THREE.Points(geometry, material);
-scene.add(particleSystem);
-
-// Pre-calculate Shapes
-function getSpherePoint(i) {
-    const phi = Math.acos(-1 + (2 * i) / PARTICLE_COUNT);
-    const theta = Math.sqrt(PARTICLE_COUNT * Math.PI) * phi;
-    const r = 10;
-    return {
-        x: r * Math.cos(theta) * Math.sin(phi),
-        y: r * Math.sin(theta) * Math.sin(phi),
-        z: r * Math.cos(phi)
-    };
-}
-
-function getCubePoint(i) {
-    const r = 8; 
-    // Simple random point inside cube volume for now
-    return {
-        x: (Math.random() - 0.5) * 2 * r,
-        y: (Math.random() - 0.5) * 2 * r,
-        z: (Math.random() - 0.5) * 2 * r
-    };
-}
-
-function getTorusPoint(i) {
-    const u = Math.random() * Math.PI * 2;
-    const v = Math.random() * Math.PI * 2;
-    const R = 8; const r = 3;
-    return {
-        x: (R + r * Math.cos(v)) * Math.cos(u),
-        y: (R + r * Math.cos(v)) * Math.sin(u),
-        z: r * Math.sin(v)
-    };
-}
-
-// Logic Variables
-let currentShape = 'sphere'; // sphere, cube, torus, dissipate
-let handDetected = false;
-let lastHandTime = 0;
-let sceneScale = 1;
-
-/**
- * PART 2: MEDIAPIPE HAND TRACKING & GESTURE LOGIC
- */
-const videoElement = document.getElementById('input_video');
-
-function onResults(results) {
-    const hands = results.multiHandLandmarks;
-    
-    if (hands && hands.length > 0) {
-        handDetected = true;
-        lastHandTime = Date.now();
-        
-        // 1. Detect Hand Span (Scaling)
-        if (hands.length === 2) {
-            // Calculate distance between wrist of hand 1 and wrist of hand 2
-            const dx = hands[0][0].x - hands[1][0].x;
-            const dy = hands[0][0].y - hands[1][0].y;
-            const dist = Math.sqrt(dx*dx + dy*dy);
-            // Map distance (approx 0.1 to 0.8) to scale (0.5 to 2.5)
-            const targetScale = Math.max(0.5, Math.min(3.0, dist * 4));
-            sceneScale = sceneScale * 0.9 + targetScale * 0.1; // Smooth lerp
-        } else {
-            // One hand: base scale on "openness" of hand (Tension)
-            const wrist = hands[0][0];
-            const middleTip = hands[0][12];
-            const tension = Math.sqrt(Math.pow(wrist.x - middleTip.x, 2) + Math.pow(wrist.y - middleTip.y, 2));
-            sceneScale = sceneScale * 0.9 + (0.5 + tension * 2) * 0.1;
-        }
-
-        // 2. Gesture Recognition (Simple Heuristics)
-        const lm = hands[0]; // Use primary hand for shape
-        
-        // Check if fingers are curled (Tip closer to wrist than PIP joint)
-        const isFingerCurled = (tipIdx, pipIdx) => {
-            const dTip = Math.sqrt(Math.pow(lm[tipIdx].x - lm[0].x, 2) + Math.pow(lm[tipIdx].y - lm[0].y, 2));
-            const dPip = Math.sqrt(Math.pow(lm[pipIdx].x - lm[0].x, 2) + Math.pow(lm[pipIdx].y - lm[0].y, 2));
-            return dTip < dPip;
+        const gameState = {
+            phase: 'waiting', // waiting, active, result
+            targetIndex: 0,
+            p1Score: 0,
+            p2Score: 0,
+            p1HoldTime: 0,
+            p2HoldTime: 0,
+            currentShape: 'cloud' // Visual shape state
         };
+        const HOLD_THRESHOLD = 20; // Frames required to hold gesture to win
 
-        const thumbOpen = !isFingerCurled(4, 2);
-        const indexOpen = !isFingerCurled(8, 6);
-        const middleOpen = !isFingerCurled(12, 10);
-        const ringOpen = !isFingerCurled(16, 14);
-        const pinkyOpen = !isFingerCurled(20, 18);
+        // DOM Elements
+        const uiTarget = document.getElementById('target-word');
+        const uiHint = document.getElementById('sub-hint');
+        const uiS1 = document.getElementById('s1');
+        const uiS2 = document.getElementById('s2');
+        const uiP1Det = document.getElementById('p1-detect');
+        const uiP2Det = document.getElementById('p2-detect');
 
-        let fingersOpen = [thumbOpen, indexOpen, middleOpen, ringOpen, pinkyOpen].filter(Boolean).length;
+        // --- 1. Three.js Visuals ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050505, 0.02);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        camera.position.z = 18;
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
 
-        if (fingersOpen <= 1) {
-            currentShape = 'cube'; // Fist
-            material.color.setHex(0xff0055); // Red/Pink
-        } else if (indexOpen && !middleOpen && !ringOpen && !pinkyOpen) {
-            currentShape = 'torus'; // Pointing
-            material.color.setHex(0xffff00); // Yellow
-        } else {
-            currentShape = 'sphere'; // Open Hand
-            material.color.setHex(0x00ffff); // Cyan
+        // Particle System
+        const PARTICLE_COUNT = 6000;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(PARTICLE_COUNT * 3);
+        const colors = new Float32Array(PARTICLE_COUNT * 3);
+        const colorP1 = new THREE.Color(0x00d2ff); // Cyan
+        const colorP2 = new THREE.Color(0xff0055); // Pink
+        const colorNeu = new THREE.Color(0xffffff); // White
+
+        // Precompute shapes
+        const shapes = { cloud: [], cube: [], sphere: [], helix: [], pyramid: [] };
+
+        for(let i=0; i<PARTICLE_COUNT; i++) {
+            // Cloud (Initial)
+            const x = (Math.random()-0.5)*25;
+            const y = (Math.random()-0.5)*15;
+            const z = (Math.random()-0.5)*10;
+            positions[i*3]=x; positions[i*3+1]=y; positions[i*3+2]=z;
+            shapes.cloud.push(x, y, z);
+            
+            // Sphere ('O')
+            const theta = Math.random()*Math.PI*2;
+            const phi = Math.acos((Math.random()*2)-1);
+            const r = 5;
+            shapes.sphere.push(r*Math.sin(phi)*Math.cos(theta), r*Math.sin(phi)*Math.sin(theta), r*Math.cos(phi));
+
+            // Cube ('C')
+            const sz = 7;
+            shapes.cube.push((Math.random()-0.5)*sz, (Math.random()-0.5)*sz, (Math.random()-0.5)*sz);
+
+            // Helix ('L')
+            const hA = i*0.1; 
+            const hR = 3;
+            const strand = (i%2===0)?0:Math.PI;
+            shapes.helix.push(hR*Math.cos(hA+strand), (i/PARTICLE_COUNT)*14-7, hR*Math.sin(hA+strand));
+
+            // Pyramid ('V')
+            const pyH = (Math.random()-0.5)*10; // Height -5 to 5
+            const pyR = (1 - (pyH+5)/10) * 6; // Radius gets smaller as H goes up
+            const pyAng = Math.random()*Math.PI*2;
+            shapes.pyramid.push(pyR*Math.cos(pyAng), pyH, pyR*Math.sin(pyAng));
+
+            // Initial Color
+            colors[i*3]=1; colors[i*3+1]=1; colors[i*3+2]=1;
+        }
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        const mat = new THREE.PointsMaterial({ size: 0.15, vertexColors: true, blending: THREE.AdditiveBlending, transparent: true });
+        const particles = new THREE.Points(geometry, mat);
+        scene.add(particles);
+
+        // --- 2. Game Logic Functions ---
+
+        function startRound() {
+            gameState.phase = 'active';
+            gameState.p1HoldTime = 0;
+            gameState.p2HoldTime = 0;
+            
+            // Pick random target
+            const rand = Math.floor(Math.random() * TARGETS.length);
+            gameState.targetIndex = rand;
+            
+            // UI
+            uiTarget.innerText = TARGETS[rand].name;
+            uiTarget.style.color = "#ffffff";
+            uiTarget.style.transform = "scale(1.0)";
+            uiHint.innerText = `Sign ASL "${TARGETS[rand].letter}"`;
+            
+            gameState.currentShape = 'cloud'; // Reset shape to cloud while they think
+            updateParticleColors(colorNeu);
         }
 
-    } else {
-        handDetected = false;
-    }
-}
+        function handleWin(winner) {
+            gameState.phase = 'result';
+            const target = TARGETS[gameState.targetIndex];
+            
+            // Morph to winning shape
+            gameState.currentShape = target.shape;
 
-const hands = new Hands({locateFile: (file) => {
-    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-}});
+            if(winner === 1) {
+                gameState.p1Score++;
+                uiS1.innerText = gameState.p1Score;
+                uiTarget.innerText = "PLAYER 1 WINS!";
+                uiTarget.style.color = "#00d2ff";
+                updateParticleColors(colorP1);
+            } else {
+                gameState.p2Score++;
+                uiS2.innerText = gameState.p2Score;
+                uiTarget.innerText = "PLAYER 2 WINS!";
+                uiTarget.style.color = "#ff0055";
+                updateParticleColors(colorP2);
+            }
 
-hands.setOptions({
-    maxNumHands: 2,
-    modelComplexity: 1,
-    minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5
-});
-hands.onResults(onResults);
+            uiTarget.style.transform = "scale(1.2)";
+            uiHint.innerText = "Next round in 3 seconds...";
 
-const cameraUtils = new Camera(videoElement, {
-    onFrame: async () => {
-        await hands.send({image: videoElement});
-        processPPG(); // Run Heart Rate logic on every frame
-    },
-    width: 640,
-    height: 480
-});
-cameraUtils.start();
-
-
-/**
- * PART 3: PPG HEART RATE MONITOR (SIMPLIFIED)
- * Logic: Analyze Green channel intensity on the forehead.
- */
-const ppgCanvas = document.getElementById('ppg-canvas');
-const ppgCtx = ppgCanvas.getContext('2d', {willReadFrequently: true});
-const bpmDisplay = document.getElementById('bpm-display');
-
-// Signal processing buffers
-const signalBuffer = [];
-const BUFFER_SIZE = 150; // approx 5 seconds at 30fps
-let lastBPMPulses = [];
-
-function processPPG() {
-    if (videoElement.paused || videoElement.ended) return;
-
-    ppgCanvas.width = videoElement.videoWidth;
-    ppgCanvas.height = videoElement.videoHeight;
-    
-    // Draw current video frame to hidden canvas
-    ppgCtx.drawImage(videoElement, 0, 0, ppgCanvas.width, ppgCanvas.height);
-
-    // Define ROI (Region of Interest) - Approximate Forehead
-    // Assuming user is centered: Top center of the frame
-    const roiX = Math.floor(ppgCanvas.width * 0.4);
-    const roiY = Math.floor(ppgCanvas.height * 0.1);
-    const roiW = Math.floor(ppgCanvas.width * 0.2);
-    const roiH = Math.floor(ppgCanvas.height * 0.15);
-
-    // Get pixel data
-    const frameData = ppgCtx.getImageData(roiX, roiY, roiW, roiH);
-    const data = frameData.data;
-    
-    let greenSum = 0;
-    // Sum green channel
-    for (let i = 0; i < data.length; i += 4) {
-        greenSum += data[i + 1]; 
-    }
-    const greenAvg = greenSum / (data.length / 4);
-
-    // Push to buffer
-    signalBuffer.push({ t: Date.now(), val: greenAvg });
-    if (signalBuffer.length > BUFFER_SIZE) signalBuffer.shift();
-
-    // Calculate BPM every 30 frames
-    if (signalBuffer.length === BUFFER_SIZE && Date.now() % 10 === 0) {
-        calculateBPM();
-    }
-}
-
-function calculateBPM() {
-    // 1. Detrending (Simple moving average subtraction)
-    const values = signalBuffer.map(s => s.val);
-    const windowSize = 15;
-    const cleanSignal = [];
-
-    for(let i=0; i<values.length; i++) {
-        let sum = 0, count = 0;
-        for(let j=Math.max(0, i-windowSize); j<Math.min(values.length, i+windowSize); j++) {
-            sum += values[j]; count++;
+            setTimeout(startRound, 3000);
         }
-        cleanSignal.push(values[i] - (sum/count));
-    }
 
-    // 2. Peak Detection
-    let peaks = 0;
-    for(let i=1; i<cleanSignal.length-1; i++) {
-        // Find local maxima
-        if(cleanSignal[i] > cleanSignal[i-1] && cleanSignal[i] > cleanSignal[i+1] && cleanSignal[i] > 0.5) {
-            peaks++;
+        function updateParticleColors(targetColor) {
+            const cols = geometry.attributes.color.array;
+            for(let i=0; i<PARTICLE_COUNT; i++){
+                cols[i*3] = targetColor.r;
+                cols[i*3+1] = targetColor.g;
+                cols[i*3+2] = targetColor.b;
+            }
+            geometry.attributes.color.needsUpdate = true;
         }
-    }
 
-    // 3. Convert to BPM (peaks over the buffer duration)
-    const durationSec = (signalBuffer[signalBuffer.length-1].t - signalBuffer[0].t) / 1000;
-    let bpm = Math.round((peaks / durationSec) * 60);
+        // --- 3. Animation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Morphing
+            const curr = geometry.attributes.position.array;
+            const dest = shapes[gameState.currentShape];
+            for(let i=0; i<PARTICLE_COUNT*3; i++) {
+                curr[i] += (dest[i] - curr[i]) * 0.08;
+            }
+            geometry.attributes.position.needsUpdate = true;
+            particles.rotation.y += 0.002;
+            renderer.render(scene, camera);
+        }
+        animate();
 
-    // Clamp to realistic values
-    if (bpm > 40 && bpm < 200) {
-        lastBPMPulses.push(bpm);
-        if(lastBPMPulses.length > 5) lastBPMPulses.shift();
+        // --- 4. Computer Vision (MediaPipe) ---
         
-        // Smooth display
-        const avgBpm = Math.floor(lastBPMPulses.reduce((a,b)=>a+b,0) / lastBPMPulses.length);
-        bpmDisplay.innerText = avgBpm;
-    }
-}
+        // ASL Detection Logic
+        function detectASL(lm) {
+            // Helper: Distance between two indices
+            const d = (i1, i2) => Math.hypot(lm[i1].x - lm[i2].x, lm[i1].y - lm[i2].y);
+            
+            // Finger States (Extended or not relative to Wrist 0)
+            const wrist = lm[0];
+            const isExt = (tip, pip) => d(tip, 0) > d(pip, 0); // Simple extension check
 
+            const thumbOut = isExt(4, 2);
+            const indexUp = isExt(8, 6);
+            const midUp = isExt(12, 10);
+            const ringUp = isExt(16, 14);
+            const pinkyUp = isExt(20, 18);
 
-/**
- * PART 4: ANIMATION LOOP
- */
-function animate() {
-    requestAnimationFrame(animate);
+            // "O" - Tips of Thumb(4) and Index(8) close, others curled?
+            // Actually O is all fingers curled touching thumb.
+            // Simplified: Index tip close to Thumb tip.
+            if(d(4, 8) < 0.05) return "O";
 
-    const positionsArray = geometry.attributes.position.array;
-    const time = Date.now() * 0.001;
+            // "C" - Fingers curved (not fully closed like fist, not fully open)
+            // Hard to detect curvature easily. 
+            // Approximation: Thumb and Index spread apart vertically but C-shape?
+            // Let's rely on Geometric relation: Index tip and Thumb tip share Y roughly, widely separated X?
+            // Easier check: If "O" condition fails, but fingers aren't fully straight...
+            // Let's use simpler: "C" usually implies hand is sideways. 
+            // Let's do a loose check: Thumb and Index not touching, but other fingers curled/aligned?
+            // Valid Approximation for Game: Thumb + Index + Middle Extended, but tips arranged in arc?
+            // Actually, let's map:
+            // C: Thumb Open, Index Open, Middle Open, Ring Open, Pinky Open (All somewhat curved).
+            // This is hard vs Open Hand.
+            // Let's try Strict Rules:
+            
+            // "V": Index & Middle UP. Ring & Pinky DOWN.
+            if(indexUp && midUp && !ringUp && !pinkyUp) return "V";
 
-    // Check dissipation (No hands for 2 seconds)
-    let dissipating = (!handDetected && (Date.now() - lastHandTime > 2000));
+            // "L": Index UP. Thumb OUT. Middle/Ring/Pinky DOWN.
+            if(indexUp && thumbOut && !midUp && !ringUp && !pinkyUp) return "L";
 
-    for(let i = 0; i < PARTICLE_COUNT; i++) {
-        const i3 = i * 3;
-        
-        // Determine Target
-        let target = {x:0, y:0, z:0};
-        
-        if (dissipating) {
-            // Explosion/Falling physics
-            velocities[i3 + 1] -= 0.05; // Gravity
-            positionsArray[i3] += velocities[i3] + (Math.random()-0.5);
-            positionsArray[i3+1] += velocities[i3+1];
-            positionsArray[i3+2] += velocities[i3+2] + (Math.random()-0.5);
-        } else {
-            // Shape Morphing
-            if (currentShape === 'sphere') target = getSpherePoint(i);
-            else if (currentShape === 'cube') target = getCubePoint(i);
-            else if (currentShape === 'torus') target = getTorusPoint(i);
+            // "C": If not others, and fingers are somewhat open?
+            // Let's define C as: Thumb & Index separated by medium distance, others mimic index.
+            // Hack for stability: If it's not V, L, or O, and Index is Up?
+            if(d(4,8) > 0.05 && d(4,8) < 0.2 && !midUp) return "C"; // C-clamp shape
 
-            // Apply Scaling
-            target.x *= sceneScale;
-            target.y *= sceneScale;
-            target.z *= sceneScale;
-
-            // Add subtle noise/breathing
-            target.x += Math.sin(time + i) * 0.1;
-            target.y += Math.cos(time + i) * 0.1;
-
-            // Lerp Position (move 5% towards target per frame)
-            positionsArray[i3] += (target.x - positionsArray[i3]) * 0.05;
-            positionsArray[i3+1] += (target.y - positionsArray[i3+1]) * 0.05;
-            positionsArray[i3+2] += (target.z - positionsArray[i3+2]) * 0.05;
-
-            // Reset velocity for next dissipation event
-            velocities[i3] = (Math.random()-0.5) * 0.5;
-            velocities[i3+1] = (Math.random()-0.5) * 0.5;
-            velocities[i3+2] = (Math.random()-0.5) * 0.5;
+            return null;
         }
-    }
 
-    geometry.attributes.position.needsUpdate = true;
-    
-    // Slow rotation of the whole system
-    particleSystem.rotation.y += 0.002;
-    particleSystem.rotation.z += 0.001;
+        const videoElement = document.getElementById('input_video');
 
-    renderer.render(scene, camera);
-}
+        function onResults(results) {
+            if(gameState.phase !== 'active') return;
 
-// Handle Resize
-window.addEventListener('resize', () => {
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-});
+            const targetChar = TARGETS[gameState.targetIndex].letter;
+            let p1Found = false;
+            let p2Found = false;
 
-animate();
+            // Reset detections UI opacity
+            uiP1Det.style.opacity = 0;
+            uiP2Det.style.opacity = 0;
 
-</script>
+            if (results.multiHandLandmarks) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    // Determine Player based on X coord of wrist (0)
+                    // Video is mirrored: Left side of screen (x < 0.5) is Player 1
+                    // Right side of screen (x > 0.5) is Player 2
+                    const x = landmarks[0].x;
+                    const isP1 = x < 0.5;
+
+                    const gesture = detectASL(landmarks);
+                    
+                    if(isP1) {
+                        uiP1Det.innerText = "P1: " + (gesture || "...");
+                        uiP1Det.style.opacity = 1;
+                        if(gesture === targetChar) p1Found = true;
+                    } else {
+                        uiP2Det.innerText = "P2: " + (gesture || "...");
+                        uiP2Det.style.opacity = 1;
+                        if(gesture === targetChar) p2Found = true;
+                    }
+                }
+            }
+
+            // Game Logic: Hold to win
+            if(p1Found) gameState.p1HoldTime++; else gameState.p1HoldTime = 0;
+            if(p2Found) gameState.p2HoldTime++; else gameState.p2HoldTime = 0;
+
+            // Visual feedback for holding
+            if(p1Found) uiP1Det.style.background = `rgba(0, 210, 255, ${Math.min(gameState.p1HoldTime/HOLD_THRESHOLD, 1)})`;
+            if(p2Found) uiP2Det.style.background = `rgba(255, 0, 85, ${Math.min(gameState.p2HoldTime/HOLD_THRESHOLD, 1)})`;
+
+            if(gameState.p1HoldTime > HOLD_THRESHOLD) handleWin(1);
+            else if(gameState.p2HoldTime > HOLD_THRESHOLD) handleWin(2);
+        }
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+        hands.onResults(onResults);
+
+        const cameraFeed = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 1280, height: 720
+        });
+
+        // Initialize
+        uiTarget.innerText = "Starting...";
+        setTimeout(() => {
+            cameraFeed.start();
+            startRound();
+        }, 1000);
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
 </body>
 </html>
