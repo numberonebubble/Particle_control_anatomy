@@ -9,19 +9,19 @@
         /* Main 3D Canvas */
         #c { width: 100vw; height: 100vh; display: block; }
 
-        /* UI Overlay - Heart Rate (Top Right) */
+        /* UI Overlay - Heart / Resp (Top Right) */
         #hr-container {
             position: absolute; top: 20px; right: 20px;
             color: #00ff88; background: rgba(0, 20, 10, 0.8);
             padding: 15px; border-radius: 10px; border: 1px solid #00ff88;
             text-align: right; pointer-events: none;
         }
-        #bpm-display { font-size: 3rem; font-weight: bold; }
-        #bpm-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 2px; }
+        #bpm-display { font-size: 3rem; font-weight: bold; transition: opacity 0.2s ease, color 0.2s ease; }
+        #bpm-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 2px; transition: opacity 0.2s ease, color 0.2s ease; }
 
         /* Respiration UI */
-        #resp-display { font-size: 1.6rem; font-weight: bold; margin-top: 8px; }
-        #resp-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 2px; opacity: 0.8; }
+        #resp-display { font-size: 1.6rem; font-weight: bold; margin-top: 8px; transition: opacity 0.2s ease, color 0.2s ease; }
+        #resp-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 2px; opacity: 0.8; transition: opacity 0.2s ease, color 0.2s ease; }
 
         /* Quality text */
         #hr-quality, #resp-quality {
@@ -30,6 +30,7 @@
             letter-spacing: 1px;
             opacity: 0.8;
             margin-top: 4px;
+            transition: opacity 0.2s ease, color 0.2s ease;
         }
 
         /* UI Overlay - Webcam (Bottom Right) */
@@ -86,7 +87,7 @@
 
 <script>
 /**
- * Small helper
+ * Helpers
  */
 function clamp01(x) {
     return Math.max(0, Math.min(1, x));
@@ -132,14 +133,14 @@ geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     const scaleXY = 9.0;   // scale for x,y
     const scaleZ  = 4.0;   // thickness in z
 
-    const gridN = 26; // 26^3 = 17,576 candidates, plenty to choose from
+    const gridN = 26; // 26^3 = 17,576 candidates
     const candidates = [];
 
     for (let ix = 0; ix < gridN; ix++) {
         const x2d = -1 + (2 * ix) / (gridN - 1); // -1..1
 
         for (let iy = 0; iy < gridN; iy++) {
-            const y2d = -1.3 + (2.6 * iy) / (gridN - 1); // -1.3..1.3 (slightly taller)
+            const y2d = -1.3 + (2.6 * iy) / (gridN - 1); // -1.3..1.3
 
             // Implicit 2D heart test
             const x2 = x2d * x2d;
@@ -147,12 +148,11 @@ geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
             const a  = x2 + y2 - 1;
             const heartVal = a * a * a - x2 * y2d * y2d * y2d;
 
-            if (heartVal > 0) continue; // outside -> reject
+            if (heartVal > 0) continue; // outside
 
             for (let iz = 0; iz < gridN; iz++) {
                 const z2d = -1 + (2 * iz) / (gridN - 1); // -1..1
 
-                // Store candidate in local heart coordinates
                 candidates.push({
                     x: x2d * scaleXY,
                     y: y2d * scaleXY,   // upright: lobes up, point down
@@ -162,7 +162,6 @@ geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         }
     }
 
-    // If somehow not enough (unlikely), fallback to random fill
     if (candidates.length < PARTICLE_COUNT) {
         console.warn('Not enough heart candidates, falling back to random fill');
         for (let i = 0; i < PARTICLE_COUNT; i++) {
@@ -174,7 +173,6 @@ geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         return;
     }
 
-    // Subsample candidates evenly to fill exactly PARTICLE_COUNT slots.
     for (let i = 0; i < PARTICLE_COUNT; i++) {
         const i3 = i * 3;
         const idx = Math.floor((i / (PARTICLE_COUNT - 1)) * (candidates.length - 1));
@@ -208,19 +206,18 @@ const material = new THREE.PointsMaterial({
 });
 
 const particleSystem = new THREE.Points(geometry, material);
-particleSystem.position.set(0, 0, 0); // centre at origin
+particleSystem.position.set(0, 0, 0);
 scene.add(particleSystem);
 
 // Logic Variables
 let handDetected = false;
 let lastHandTime = 0;
-let heartActive = false;     // true when fist is detected
+let heartActive = false;
 
 // Heartbeat animation state
-let currentBpm = 60;         // smoothed BPM for animation
-let heartPhase = 0;          // phase of heartbeat
+let currentBpm = 60;
+let heartPhase = 0;
 let lastFrameTime = performance.now();
-
 
 /**
  * PART 2: MEDIAPIPE HAND TRACKING & GESTURE LOGIC
@@ -234,7 +231,6 @@ function onResults(results) {
         handDetected = true;
         lastHandTime = Date.now();
 
-        // Gesture detection for FIST (heart on) vs other (heart off)
         const lm = handsResults[0];
 
         const isFingerCurled = (tipIdx, pipIdx) => {
@@ -258,7 +254,6 @@ function onResults(results) {
         const fingersOpenCount = [thumbOpen, indexOpen, middleOpen, ringOpen, pinkyOpen]
             .filter(Boolean).length;
 
-        // Fist = heart ON, everything else = heart OFF
         if (fingersOpenCount <= 1) {
             heartActive = true;
             material.color.setHex(0xff2266);
@@ -286,24 +281,28 @@ hands.onResults(onResults);
 
 
 /**
- * PART 3: PPG HEART RATE MONITOR (FOREHEAD ROI, STABLE BPM + QUALITY)
+ * PART 3: PPG HEART RATE MONITOR (FOREHEAD ROI, AMBIENT ROBUST + QUALITY)
  */
 const ppgCanvas = document.getElementById('ppg-canvas');
 const ppgCtx = ppgCanvas.getContext('2d', { willReadFrequently: true });
 const bpmDisplay = document.getElementById('bpm-display');
+const bpmLabel = document.getElementById('bpm-label');
 const respDisplay = document.getElementById('resp-display');
+const respLabel = document.getElementById('resp-label');
 const hrQualityDisplay = document.getElementById('hr-quality');
 const respQualityDisplay = document.getElementById('resp-quality');
 
 const signalBuffer = [];
-const BUFFER_SIZE = 240; // ~8s at 30 fps – more stable
+const BUFFER_SIZE = 240; // ~8s at 30fps
 let lastBPMPulses = [];
 let lastBpmCalcTime = 0;
-const BPM_UPDATE_INTERVAL = 900; // ms between BPM calculations
+const BPM_UPDATE_INTERVAL = 900;
 
 let hrQuality = 0;
-let currentRespRate = 0;
-let respQuality = 0;
+
+// For motion artifact estimation
+let lastGreenNorm = null;
+let ppgDerivBuffer = [];
 
 function processPPG() {
     if (videoElement.paused || videoElement.ended || videoElement.videoWidth === 0) return;
@@ -311,7 +310,6 @@ function processPPG() {
     ppgCanvas.width = videoElement.videoWidth;
     ppgCanvas.height = videoElement.videoHeight;
 
-    // Draw frame
     ppgCtx.drawImage(videoElement, 0, 0, ppgCanvas.width, ppgCanvas.height);
 
     // Forehead ROI (top center)
@@ -323,15 +321,30 @@ function processPPG() {
     const frameData = ppgCtx.getImageData(roiX, roiY, roiW, roiH);
     const data = frameData.data;
 
-    let greenSum = 0;
+    let sumR = 0, sumG = 0, sumB = 0;
+    const pixelCount = data.length / 4;
+
     for (let i = 0; i < data.length; i += 4) {
-        greenSum += data[i + 1];
+        sumR += data[i];
+        sumG += data[i + 1];
+        sumB += data[i + 2];
     }
-    const greenAvg = greenSum / (data.length / 4);
+
+    // Ambient-robust normalised green
+    const total = sumR + sumG + sumB + 1e-6;
+    const greenNorm = sumG / total;
 
     const now = Date.now();
-    signalBuffer.push({ t: now, val: greenAvg });
+    signalBuffer.push({ t: now, val: greenNorm });
     if (signalBuffer.length > BUFFER_SIZE) signalBuffer.shift();
+
+    // Motion derivative
+    if (lastGreenNorm !== null) {
+        const diff = Math.abs(greenNorm - lastGreenNorm);
+        ppgDerivBuffer.push(diff);
+        if (ppgDerivBuffer.length > BUFFER_SIZE) ppgDerivBuffer.shift();
+    }
+    lastGreenNorm = greenNorm;
 
     if (
         signalBuffer.length === BUFFER_SIZE &&
@@ -345,7 +358,7 @@ function processPPG() {
 function calculateBPM() {
     const values = signalBuffer.map((s) => s.val);
 
-    // Detrend: moving average
+    // Detrend with moving average
     const windowSize = 15;
     const cleanSignal = [];
     for (let i = 0; i < values.length; i++) {
@@ -362,7 +375,7 @@ function calculateBPM() {
         cleanSignal.push(values[i] - sum / count);
     }
 
-    // Basic noise metrics for quality
+    // Noise metrics
     const rawMean = values.reduce((a, b) => a + b, 0) / values.length;
     const rawVar = values.reduce((a, b) => a + Math.pow(b - rawMean, 2), 0) / values.length;
     const rawStd = Math.sqrt(rawVar);
@@ -375,7 +388,6 @@ function calculateBPM() {
     const std = Math.sqrt(variance);
     const threshold = mean + 0.4 * std;
 
-    // Peak times via local maxima
     const peakTimes = [];
     const peakValues = [];
     for (let i = 1; i < cleanSignal.length - 1; i++) {
@@ -391,10 +403,9 @@ function calculateBPM() {
 
     if (peakTimes.length < 2) return;
 
-    // Average RR interval
-    let intervals = [];
+    const intervals = [];
     for (let i = 1; i < peakTimes.length; i++) {
-        intervals.push((peakTimes[i] - peakTimes[i - 1]) / 1000); // seconds
+        intervals.push((peakTimes[i] - peakTimes[i - 1]) / 1000);
     }
     const avgInterval =
         intervals.reduce((a, b) => a + b, 0) / intervals.length;
@@ -404,10 +415,8 @@ function calculateBPM() {
     let bpm = 60 / avgInterval;
     bpm = Math.round(bpm);
 
-    // Reasonable HR bounds
     if (bpm < 40 || bpm > 200) return;
 
-    // Smooth BPM for display & animation
     lastBPMPulses.push(bpm);
     if (lastBPMPulses.length > 6) lastBPMPulses.shift();
     const avgBpm =
@@ -417,45 +426,74 @@ function calculateBPM() {
     bpmDisplay.innerText = Math.round(currentBpm);
 
     // --- HR QUALITY METRIC ---
-    // 1) Amplitude / noise (SNR-like)
     let peakMeanAmp = 0;
     if (peakValues.length > 0) {
         peakMeanAmp = peakValues.reduce((a, b) => a + b, 0) / peakValues.length;
     }
-    const ampMetric = clamp01((peakMeanAmp / (std + 1e-6)) * 0.5); // scaled
+    const ampMetric = clamp01((peakMeanAmp / (std + 1e-6)) * 0.5);
 
-    // 2) Rhythm regularity
     const intMean = avgInterval;
     const intVar = intervals.reduce((a, b) => a + Math.pow(b - intMean, 2), 0) / intervals.length;
     const intStd = Math.sqrt(intVar);
     let rhythmMetric = 1 - (intStd / (intMean + 1e-6));
     rhythmMetric = clamp01(rhythmMetric);
 
-    // 3) Raw vs clean std ratio (small if dominated by noise)
     let stdRatio = 0;
     if (rawStd > 1e-6) {
         stdRatio = clamp01(std / rawStd);
     }
 
-    const quality = clamp01(0.45 * ampMetric + 0.45 * rhythmMetric + 0.10 * stdRatio);
+    // Motion artifact metric from derivative
+    let motionMetric = 1;
+    if (ppgDerivBuffer.length > 0) {
+        const derivMean = ppgDerivBuffer.reduce((a, b) => a + b, 0) / ppgDerivBuffer.length;
+        // High derivative => lower motionMetric
+        motionMetric = clamp01(1 - derivMean * 50); // scale factor tuned empirically
+    }
+
+    const quality = clamp01(
+        0.35 * ampMetric +
+        0.35 * rhythmMetric +
+        0.10 * stdRatio +
+        0.20 * motionMetric
+    );
     hrQuality = quality;
     hrQualityDisplay.innerText = `HR Q: ${hrQuality.toFixed(2)}`;
+
+    // UI dimming based on quality
+    if (hrQuality < 0.5) {
+        bpmDisplay.style.opacity = 0.4;
+        bpmLabel.style.opacity = 0.4;
+        hrQualityDisplay.style.opacity = 0.6;
+        bpmDisplay.style.color = '#888888';
+        bpmLabel.style.color = '#888888';
+        hrQualityDisplay.style.color = '#888888';
+    } else {
+        bpmDisplay.style.opacity = 1.0;
+        bpmLabel.style.opacity = 0.9;
+        hrQualityDisplay.style.opacity = 0.9;
+        bpmDisplay.style.color = '#ffffff';
+        bpmLabel.style.color = '#00ff88';
+        hrQualityDisplay.style.color = '#00ff88';
+    }
 }
 
 
 /**
- * PART 4: RESPIRATION ESTIMATION (CHEST ROI, MOTION-BASED + QUALITY)
+ * PART 4: RESPIRATION (CHEST ROI, MOTION-ROBUST + QUALITY)
  */
 const respSignalBuffer = [];
 const RESP_BUFFER_SIZE = 300; // ~10s at 30fps
 let lastRespCalcTime = 0;
-const RESP_UPDATE_INTERVAL = 1500; // ms
+const RESP_UPDATE_INTERVAL = 1500;
 let recentRespRates = [];
+let currentRespRate = 0;
+let respQuality = 0;
+let lastCenterYRaw = null;
 
 function processRespiration() {
     if (videoElement.paused || videoElement.ended || videoElement.videoWidth === 0) return;
 
-    // Use same canvas as PPG – draw current frame
     ppgCanvas.width = videoElement.videoWidth;
     ppgCanvas.height = videoElement.videoHeight;
     ppgCtx.drawImage(videoElement, 0, 0, ppgCanvas.width, ppgCanvas.height);
@@ -473,7 +511,6 @@ function processRespiration() {
     const cols = chestW;
     const rowSums = new Array(rows).fill(0);
 
-    // Project luminance onto vertical axis and compute center-of-mass
     for (let y = 0; y < rows; y++) {
         let rowSum = 0;
         for (let x = 0; x < cols; x++) {
@@ -487,6 +524,13 @@ function processRespiration() {
         rowSums[y] = rowSum;
     }
 
+    // Normalise row profile by frame mean to reduce non-uniform illumination changes
+    let frameMean = rowSums.reduce((a, b) => a + b, 0) / (rows || 1);
+    if (frameMean < 1e-6) frameMean = 1e-6;
+    for (let y = 0; y < rows; y++) {
+        rowSums[y] /= frameMean;
+    }
+
     let total = 0;
     let weightedSum = 0;
     for (let y = 0; y < rows; y++) {
@@ -498,6 +542,16 @@ function processRespiration() {
     if (total > 0) {
         centerY = weightedSum / total;
     }
+
+    // Soft motion clamp: if sudden global jump, limit it
+    if (lastCenterYRaw !== null) {
+        const deltaY = centerY - lastCenterYRaw;
+        const maxJump = rows * 0.1; // allow up to 10% ROI height change per frame
+        if (Math.abs(deltaY) > maxJump) {
+            centerY = lastCenterYRaw + Math.sign(deltaY) * maxJump;
+        }
+    }
+    lastCenterYRaw = centerY;
 
     const now = Date.now();
     respSignalBuffer.push({ t: now, val: centerY });
@@ -515,7 +569,7 @@ function processRespiration() {
 function calculateRespirationRate() {
     const values = respSignalBuffer.map((s) => s.val);
 
-    // Detrend with moving average (acts as high-pass)
+    // Detrend with moving average
     const windowSize = 25;
     const cleanSignal = [];
     for (let i = 0; i < values.length; i++) {
@@ -532,7 +586,7 @@ function calculateRespirationRate() {
         cleanSignal.push(values[i] - sum / count);
     }
 
-    // Soft low-pass by smoothing the detrended signal a bit
+    // Extra smoothing
     const smoothSignal = [];
     const smoothWin = 3;
     for (let i = 0; i < cleanSignal.length; i++) {
@@ -549,7 +603,6 @@ function calculateRespirationRate() {
         smoothSignal.push(sum / count);
     }
 
-    // Dynamic threshold
     const mean =
         smoothSignal.reduce((a, b) => a + b, 0) / smoothSignal.length;
     const variance =
@@ -575,19 +628,17 @@ function calculateRespirationRate() {
 
     const intervals = [];
     for (let i = 1; i < peakTimes.length; i++) {
-        intervals.push((peakTimes[i] - peakTimes[i - 1]) / 1000); // seconds
+        intervals.push((peakTimes[i] - peakTimes[i - 1]) / 1000);
     }
     const avgInterval =
         intervals.reduce((a, b) => a + b, 0) / intervals.length;
 
     if (avgInterval <= 0) return;
 
-    let brpm = 60 / avgInterval; // breaths per minute
+    let brpm = 60 / avgInterval;
 
-    // Physiological sanity bounds
     if (brpm < 4 || brpm > 40) return;
 
-    // Smooth respiration rate
     recentRespRates.push(brpm);
     if (recentRespRates.length > 6) recentRespRates.shift();
     const avgResp =
@@ -597,21 +648,18 @@ function calculateRespirationRate() {
     respDisplay.innerText = Math.round(currentRespRate);
 
     // --- RESP QUALITY METRIC ---
-    // 1) Amplitude vs noise
     let peakMeanAmp = 0;
     if (peakValues.length > 0) {
         peakMeanAmp = peakValues.reduce((a, b) => a + b, 0) / peakValues.length;
     }
     const ampMetric = clamp01((peakMeanAmp / (std + 1e-6)) * 0.5);
 
-    // 2) Rhythm regularity
     const intMean = avgInterval;
     const intVar = intervals.reduce((a, b) => a + Math.pow(b - intMean, 2), 0) / intervals.length;
     const intStd = Math.sqrt(intVar);
     let rhythmMetric = 1 - (intStd / (intMean + 1e-6));
     rhythmMetric = clamp01(rhythmMetric);
 
-    // 3) Motion smoothness proxy: std of clean vs std of smooth
     const cleanVar = cleanSignal.reduce((a, b) => a + Math.pow(b, 2), 0) / cleanSignal.length;
     const cleanStd = Math.sqrt(cleanVar);
     let smoothRatio = 0;
@@ -622,20 +670,37 @@ function calculateRespirationRate() {
     const quality = clamp01(0.45 * ampMetric + 0.45 * rhythmMetric + 0.10 * smoothRatio);
     respQuality = quality;
     respQualityDisplay.innerText = `Resp Q: ${respQuality.toFixed(2)}`;
+
+    // UI dimming based on quality
+    if (respQuality < 0.5) {
+        respDisplay.style.opacity = 0.4;
+        respLabel.style.opacity = 0.4;
+        respQualityDisplay.style.opacity = 0.6;
+        respDisplay.style.color = '#888888';
+        respLabel.style.color = '#888888';
+        respQualityDisplay.style.color = '#888888';
+    } else {
+        respDisplay.style.opacity = 1.0;
+        respLabel.style.opacity = 0.9;
+        respQualityDisplay.style.opacity = 0.9;
+        respDisplay.style.color = '#ffffff';
+        respLabel.style.color = '#00ff88';
+        respQualityDisplay.style.color = '#00ff88';
+    }
 }
 
 
 /**
- * PART 5: CAMERA + HANDS + PPG + RESPIRATION LOOP
+ * PART 5: CAMERA + HANDS + SIGNAL LOOPS
  */
 const cameraUtils = new Camera(videoElement, {
     onFrame: async () => {
         await hands.send({ image: videoElement });
 
-        // Always track respiration motion from chest
+        // Respiration always on
         processRespiration();
 
-        // Only run PPG when the heart is active (fist)
+        // HR only when heart is active (fist)
         if (heartActive) {
             processPPG();
         }
@@ -658,13 +723,11 @@ function animate() {
 
     const positionsArray = geometry.attributes.position.array;
 
-    // Heartbeat phase advances according to BPM
     const bpmForAnim = Math.max(40, Math.min(180, currentBpm || 60));
-    const freq = bpmForAnim / 60; // Hz
+    const freq = bpmForAnim / 60;
     heartPhase += freq * 2 * Math.PI * delta;
-    const beatScale = 1.0 + 0.18 * Math.sin(heartPhase); // 18% expansion
+    const beatScale = 1.0 + 0.18 * Math.sin(heartPhase);
 
-    // If no hand for > 2s, dissipate
     const dissipating =
         !handDetected && Date.now() - lastHandTime > 2000;
 
@@ -672,7 +735,6 @@ function animate() {
         const i3 = i * 3;
 
         if (heartActive && !dissipating) {
-            // Move towards dense HEART volume, scaled only by heartbeat
             const targetX = heartBasePositions[i3] * beatScale;
             const targetY = heartBasePositions[i3 + 1] * beatScale;
             const targetZ = heartBasePositions[i3 + 2] * beatScale;
@@ -681,17 +743,14 @@ function animate() {
             positionsArray[i3 + 1] += (targetY - positionsArray[i3 + 1]) * 0.2;
             positionsArray[i3 + 2] += (targetZ - positionsArray[i3 + 2]) * 0.2;
 
-            // Prep velocities for next dispersion phase
             velocities[i3]     = (Math.random() - 0.5) * 0.4;
             velocities[i3 + 1] = (Math.random() - 0.5) * 0.4;
             velocities[i3 + 2] = (Math.random() - 0.5) * 0.4;
         } else {
-            // Dissipated / cloud state
             positionsArray[i3]     += velocities[i3];
-            positionsArray[i3 + 1] += velocities[i3 + 1] - 0.01; // gentle "fall"
+            positionsArray[i3 + 1] += velocities[i3 + 1] - 0.01;
             positionsArray[i3 + 2] += velocities[i3 + 2];
 
-            // Soft boundary to keep them in view
             const r = 80;
             if (positionsArray[i3] > r || positionsArray[i3] < -r) {
                 velocities[i3] *= -0.7;
@@ -703,7 +762,6 @@ function animate() {
                 velocities[i3 + 2] *= -0.7;
             }
 
-            // Gentle random walk
             velocities[i3]     += (Math.random() - 0.5) * 0.01;
             velocities[i3 + 1] += (Math.random() - 0.5) * 0.01;
             velocities[i3 + 2] += (Math.random() - 0.5) * 0.01;
