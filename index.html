@@ -115,7 +115,7 @@
             <div id="shock-warning" style="display:none; color:red; font-weight:bold;">POSSIBLE SHOCK</div>
         </div>
 
-        <!-- New Color & Light Panel -->
+        <!-- Color & Light Panel -->
         <div id="color-panel" class="panel">
             <div class="metric-label">Color &amp; Light</div>
             <div style="margin-top:8px;">
@@ -180,14 +180,17 @@ const canvas = document.getElementById('output_canvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const videoElement = document.getElementById('input_video');
 
-// Offscreen canvas for segmentation sampling (for color stats)
-let segCanvas = null;
-let segCtx = null;
+// Offscreen canvas for bright body
+let bodyCanvas = document.createElement('canvas');
+let bodyCtx = bodyCanvas.getContext('2d', { willReadFrequently: true });
+
+// Offscreen canvas for segmentation sampling (color stats)
+let segCanvas = document.createElement('canvas');
+let segCtx = segCanvas.getContext('2d', { willReadFrequently: true });
 
 // Buffers
 const ppgBuffer = []; 
 const respBuffer = [];
-let lastProcessTime = 0;
 
 // UI Elements
 const ui = {
@@ -200,7 +203,7 @@ const ui = {
     skinSwatch: document.getElementById('skin-swatch'),
     shock: document.getElementById('shock-warning'),
     loader: document.getElementById('loader'),
-    // New Color / Light UI
+    // Color / Light UI
     bodyColor: document.getElementById('body-color'),
     envColor: document.getElementById('env-color'),
     bodyIntensity: document.getElementById('body-intensity'),
@@ -217,35 +220,48 @@ let frameCount = 0;
 function onResults(results) {
     ui.loader.style.display = 'none';
 
-    // 1. Setup Canvas
+    // Ensure correct sizing
     canvas.width = videoElement.videoWidth;
     canvas.height = videoElement.videoHeight;
-    
-    // 2. Draw raw video frame first (full scene kept intact)
-    ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+    bodyCanvas.width = canvas.width;
+    bodyCanvas.height = canvas.height;
+    segCanvas.width = canvas.width;
+    segCanvas.height = canvas.height;
 
-    // 3. Compute color spectrum & light intensity (using raw scene)
-    if (frameCount % 10 === 0) { // every ~10 frames to save CPU
+    // 1) Draw raw scene to main canvas (for documentation & analysis)
+    ctx.save();
+    ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+    ctx.restore();
+
+    // 2) Compute color spectrum & light intensity from raw scene
+    if (frameCount % 10 === 0) { // every ~10 frames for performance
         computeColorSpectrum(results);
     }
 
-    // 4. Environment Shading with Body Preserved
+    // 3) Dim entire scene slightly
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 20, 10, 0.45)'; // tweak alpha to adjust dimming
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+
+    // 4) Re-add bright body on top using segmentation mask
     if (results.segmentationMask) {
-        ctx.save();
-        // Slight dimming across the whole scene
-        ctx.fillStyle = 'rgba(0, 20, 10, 0.45)'; // adjust alpha to taste
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // Build "body only" into bodyCanvas
+        bodyCtx.clearRect(0, 0, bodyCanvas.width, bodyCanvas.height);
 
-        // Punch a hole where the body is so subject stays bright
-        ctx.globalCompositeOperation = 'destination-out';
-        ctx.drawImage(results.segmentationMask, 0, 0, canvas.width, canvas.height);
+        // Draw mask into bodyCanvas
+        bodyCtx.drawImage(results.segmentationMask, 0, 0, bodyCanvas.width, bodyCanvas.height);
 
-        // Reset composite mode
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.restore();
+        // Use mask as alpha for video
+        bodyCtx.globalCompositeOperation = 'source-in';
+        bodyCtx.drawImage(results.image, 0, 0, bodyCanvas.width, bodyCanvas.height);
+        bodyCtx.globalCompositeOperation = 'source-over';
+
+        // Draw bright body over dim scene
+        ctx.drawImage(bodyCanvas, 0, 0, canvas.width, canvas.height);
     }
 
-    // If no landmarks, draw scanning grid and bail
+    // If no landmarks, draw scanning grid and exit
     if (!results.poseLandmarks) {
         drawScanningGrid();
         frameCount++;
@@ -254,14 +270,14 @@ function onResults(results) {
 
     const lm = results.poseLandmarks;
 
-    // 5. Extract Regions of Interest (ROIs)
+    // 5) Extract Regions of Interest (ROIs)
     const nose = lm[0];
     const leftShoulder = lm[11];
     const rightShoulder = lm[12];
     
     // Forehead ROI (approximate based on nose and eyes width)
     const faceWidth = Math.abs(lm[7].x - lm[8].x) * canvas.width; 
-    const foreheadX = Math.floor(nose.x * canvas.width - faceWidth/2);
+    const foreheadX = Math.floor(nose.x * canvas.width - faceWidth / 2);
     const foreheadY = Math.floor(nose.y * canvas.height - faceWidth); 
     const foreheadW = Math.floor(faceWidth);
     const foreheadH = Math.floor(faceWidth * 0.6);
@@ -272,8 +288,8 @@ function onResults(results) {
     const chestY = Math.floor(rightShoulder.y * canvas.height);
     const chestH = Math.floor(chestW * 0.8);
 
-    // 6. Data Gathering & Drawing
-    
+    // 6) Data Gathering & Drawing
+
     // A. Heart Rate (POS) & Skin Tone
     if (foreheadW > 0 && foreheadH > 0) {
         // Draw ROI Box
@@ -281,28 +297,39 @@ function onResults(results) {
         ctx.lineWidth = 2;
         ctx.strokeRect(foreheadX, foreheadY, foreheadW, foreheadH);
 
-        const faceData = ctx.getImageData(foreheadX, foreheadY, foreheadW, foreheadH);
+        const faceData = ctx.getImageData(
+            Math.max(0, foreheadX),
+            Math.max(0, foreheadY),
+            Math.min(foreheadW, canvas.width - foreheadX),
+            Math.min(foreheadH, canvas.height - foreheadY)
+        );
         processFaceROI(faceData.data);
     }
 
     // B. Respiration (Motion)
     if (chestW > 0 && chestH > 0) {
-        // Draw ROI Box
         ctx.strokeStyle = '#00ffff'; 
+        ctx.lineWidth = 2;
         ctx.strokeRect(chestX, chestY, chestW, chestH);
 
-        // We use the raw Y position of the shoulders/chest center as the signal
         const midChestY = (leftShoulder.y + rightShoulder.y) / 2;
-        // Invert Y because screen Y goes down
         processRespirationSignal(midChestY * canvas.height); 
     }
 
-    // C. Bleeding Detection (Full Body Scan)
-    // We only scan inside the body bounding box to save CPU
+    // C. Body bounding box (for bleed & outline)
     const bodyBox = getBoundingBox(lm);
+
+    // Thin green outline of the body (always visible)
+    if (bodyBox.w > 0 && bodyBox.h > 0) {
+        ctx.strokeStyle = '#00ff00';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(bodyBox.x, bodyBox.y, bodyBox.w, bodyBox.h);
+    }
+
+    // D. Bleeding Detection (within body bounding box)
     detectBleeding(bodyBox);
 
-    // D. Skeleton Overlay
+    // E. Skeleton Overlay
     drawSkeleton(lm);
 
     frameCount++;
@@ -316,23 +343,15 @@ function onResults(results) {
 function computeColorSpectrum(results) {
     if (!canvas.width || !canvas.height) return;
 
-    // Offscreen segmentation canvas
-    if (!segCanvas) {
-        segCanvas = document.createElement('canvas');
-        segCtx = segCanvas.getContext('2d', { willReadFrequently: true });
-    }
-    segCanvas.width = canvas.width;
-    segCanvas.height = canvas.height;
-
+    // Get segmentation mask pixels
     let segData = null;
-
     if (results.segmentationMask) {
         segCtx.clearRect(0, 0, segCanvas.width, segCanvas.height);
         segCtx.drawImage(results.segmentationMask, 0, 0, segCanvas.width, segCanvas.height);
         segData = segCtx.getImageData(0, 0, segCanvas.width, segCanvas.height).data;
     }
 
-    // Get current frame pixels (raw scene)
+    // Get current frame pixels (raw scene is already drawn to ctx before dimming)
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
 
     let bodyR = 0, bodyG = 0, bodyB = 0, bodyY = 0, bodyCount = 0;
@@ -350,8 +369,9 @@ function computeColorSpectrum(results) {
 
         let inBody = false;
         if (segData) {
-            const a = segData[i + 3]; // alpha channel: body mask
-            if (a > 128) inBody = true;
+            // segmentationMask is grayscale; use red channel as mask
+            const maskR = segData[i]; 
+            if (maskR > 128) inBody = true;
         }
 
         if (inBody) {
@@ -413,13 +433,12 @@ function processFaceROI(data) {
     const avgG = sumG / pixelCount;
     const avgB = sumB / pixelCount;
 
-    // 1. Skin Color Grading
+    // Skin Color Grading
     const rgbStr = `rgb(${Math.round(avgR)},${Math.round(avgG)},${Math.round(avgB)})`;
     ui.skinSwatch.style.background = rgbStr;
     ui.skinHex.innerText = `R:${Math.round(avgR)} G:${Math.round(avgG)} B:${Math.round(avgB)}`;
     
-    // Shock Logic (Very simple heuristic: High Green/Blue relative to Red, or very low saturation)
-    // Normal skin is R dominant.
+    // Shock Logic (very simple heuristic)
     if (avgG > avgR || avgB > avgR) {
         ui.shock.style.display = 'block';
         ui.shock.innerText = "WARNING: CYANOSIS";
@@ -430,19 +449,18 @@ function processFaceROI(data) {
         ui.shock.style.display = 'none';
     }
 
-    // 2. HR Buffer
+    // HR Buffer
     const now = Date.now();
     ppgBuffer.push({ t: now, r: avgR, g: avgG, b: avgB });
-    if (ppgBuffer.length > 150) ppgBuffer.shift(); // 5s window
+    if (ppgBuffer.length > 150) ppgBuffer.shift(); // ~5s window @30fps
 
-    // Calculate HR every 1s
+    // Calculate HR every ~1s
     if (frameCount % 30 === 0) calculateHR();
 }
 
 function calculateHR() {
     if (ppgBuffer.length < 30) return;
 
-    // POS Algorithm
     const N = ppgBuffer.length;
     let meanR = 0, meanG = 0, meanB = 0;
     ppgBuffer.forEach(p => { meanR+=p.r; meanG+=p.g; meanB+=p.b; });
@@ -458,7 +476,7 @@ function calculateHR() {
         const gn = p.g/(meanG||1);
         const bn = p.b/(meanB||1);
         
-        // S = 3G - 2R - B (Standard POS projection)
+        // S = 3G - 2R - B (POS projection)
         let raw = 3*gn - 2*rn - bn;
         let filtered = hrFilter.process(raw);
         signal.push(filtered);
@@ -472,7 +490,7 @@ function calculateHR() {
     let lastPeak = -1000;
     
     for(let i=1; i<signal.length-1; i++){
-        if(signal[i]>signal[i-1] && signal[i]>signal[i+1] && signal[i]>threshold){
+        if(signal[i] > signal[i-1] && signal[i] > signal[i+1] && signal[i] > threshold){
             if(times[i] - lastPeak > 300) { // Max 200 BPM
                 peaks.push(times[i]);
                 lastPeak = times[i];
@@ -505,7 +523,6 @@ function calculateHR() {
  */
 function processRespirationSignal(yVal) {
     const now = Date.now();
-    // Use bandpass filter immediately on the raw coordinate
     const filteredY = respFilter.process(yVal);
     
     respBuffer.push({ t: now, val: filteredY });
@@ -517,7 +534,6 @@ function processRespirationSignal(yVal) {
 function calculateResp() {
     if(respBuffer.length < 60) return;
 
-    // Zero-crossing / Peak detection on the filtered signal
     const signal = respBuffer.map(b => b.val);
     const times = respBuffer.map(b => b.t);
     
@@ -573,46 +589,35 @@ function getBoundingBox(lm) {
 }
 
 function detectBleeding(bbox) {
-    // Safety check boundaries
     if (bbox.w <= 0 || bbox.h <= 0) return;
     
-    // Grab data only from the body bounding box
     const imgData = ctx.getImageData(bbox.x, bbox.y, bbox.w, bbox.h);
     const data = imgData.data;
     const w = bbox.w;
     const h = bbox.h;
 
     let bleedPixels = 0;
-    // Optimization: Stride of 4 (check every 4th pixel) to maintain FPS
+    // Stride of 4 pixels (16 bytes) for performance
     for (let i = 0; i < data.length; i += 16) { 
         const r = data[i];
         const g = data[i+1];
         const b = data[i+2];
 
-        // "Fresh Blood" Heuristic:
-        // 1. High Red
-        // 2. Red significantly higher than Green (Blood is not yellow/orange)
-        // 3. Red significantly higher than Blue (Blood is not purple)
-        // 4. Moderate to High Saturation
         if (r > 100 && r > g * 1.6 && r > b * 2.0) {
             bleedPixels++;
-            // Mark it on screen for visual feedback (optional, costly)
-            data[i] = 255; data[i+1] = 0; data[i+2] = 0; // Pure red highlight
+            data[i] = 255; data[i+1] = 0; data[i+2] = 0; // mark red
         }
     }
 
-    // Threshold: if > 0.5% of body area looks like blood
-    const threshold = (w * h) * 0.005 / 4; // divide by 4 due to stride
+    const threshold = (w * h) * 0.005 / 4; // ~0.5% area, corrected for stride
     
     if (bleedPixels > threshold) {
         ui.bleed.innerText = "DETECTED";
         ui.bleed.style.color = "red";
         ui.bleed.classList.add('alert');
         
-        // Put the modified pixels back to visualize the detection
         ctx.putImageData(imgData, bbox.x, bbox.y);
         
-        // Draw warning box
         ctx.strokeStyle = "red";
         ctx.lineWidth = 4;
         ctx.strokeRect(bbox.x, bbox.y, bbox.w, bbox.h);
@@ -681,7 +686,7 @@ const pose = new Pose({locateFile: (file) => {
 pose.setOptions({
     modelComplexity: 1,
     smoothLandmarks: true,
-    enableSegmentation: true, // Critical for "Spectrogram" isolation
+    enableSegmentation: true,
     smoothSegmentation: true,
     minDetectionConfidence: 0.5,
     minTrackingConfidence: 0.5
@@ -694,7 +699,7 @@ const camera = new Camera(videoElement, {
     },
     width: 1280,
     height: 720,
-    facingMode: 'environment' // BACK CAMERA REQUEST
+    facingMode: 'environment'
 });
 
 camera.start();
