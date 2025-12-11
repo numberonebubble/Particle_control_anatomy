@@ -2,508 +2,569 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wilderness First Response: Interactive Story</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>FR-CAS (First Responder Casualty Assessment System)</title>
     <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            background-color: #000;
-            font-family: 'Courier New', Courier, monospace; /* HUD style font */
-            color: white;
+        body { 
+            margin: 0; overflow: hidden; background: #000; 
+            font-family: 'Courier New', Courier, monospace; 
         }
 
-        #input_video {
-            position: absolute;
-            top: 0; left: 0; opacity: 0; pointer-events: none; z-index: -1;
+        /* Video Layer */
+        #input_video { display: none; } /* Hidden, processed via canvas */
+        
+        /* The Main HUD Canvas */
+        #output_canvas { 
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; 
+            object-fit: cover;
         }
 
-        /* Cinematic HUD Overlay */
-        #hud-container {
-            position: absolute;
-            bottom: 40px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 80%;
-            max-width: 700px;
-            z-index: 10;
-            text-align: center;
+        /* UI Overlay - Medical HUD */
+        #hud-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            box-shadow: inset 0 0 50px rgba(0, 255, 255, 0.2);
         }
 
-        #story-box {
-            background: rgba(10, 20, 30, 0.85);
-            border: 2px solid #00d2ff;
-            border-radius: 4px;
-            padding: 25px;
-            box-shadow: 0 0 20px rgba(0, 210, 255, 0.2);
-            position: relative;
-        }
-
-        h1 {
-            font-size: 1.1rem;
-            color: #ff3333; /* Alert Red */
-            margin: 0 0 10px 0;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            border-bottom: 1px solid #ff3333;
-            padding-bottom: 5px;
-            display: inline-block;
-        }
-
-        #narrative {
-            font-size: 1.1rem;
-            line-height: 1.5;
-            color: #e0e0e0;
-            margin-bottom: 20px;
-            min-height: 60px;
-        }
-
-        #instruction {
-            font-size: 1.3rem;
-            font-weight: bold;
-            color: #00d2ff;
-            background: rgba(0, 210, 255, 0.1);
+        .panel {
+            background: rgba(0, 20, 30, 0.85);
+            border: 1px solid #00aaaa;
             padding: 10px;
-            border-radius: 4px;
-        }
-
-        /* Progress Bar for "Holding" the gesture */
-        #progress-container {
-            width: 100%;
-            height: 6px;
-            background: #333;
-            margin-top: 15px;
-            border-radius: 3px;
-            overflow: hidden;
-        }
-
-        #progress-bar {
-            width: 0%;
-            height: 100%;
-            background: #00d2ff;
-            transition: width 0.1s linear;
-        }
-
-        #status-icon {
+            color: #00ffff;
             position: absolute;
-            top: 20px;
-            right: 20px;
-            font-size: 2rem;
-            opacity: 0.8;
+            font-size: 12px;
+            backdrop-filter: blur(4px);
         }
 
+        /* Vitals Panel (Top Left) */
+        #vitals-panel { top: 20px; left: 20px; width: 180px; }
+        .metric-big { font-size: 32px; font-weight: bold; color: #fff; }
+        .metric-label { font-size: 10px; opacity: 0.7; text-transform: uppercase; }
+        .alert { color: #ff3333; animation: flash 1s infinite; }
+
+        /* Skin/Trauma Panel (Top Right) */
+        #trauma-panel { top: 20px; right: 20px; width: 180px; text-align: right; }
+        #skin-swatch { width: 100%; height: 20px; margin-top: 5px; border: 1px solid #555; }
+
+        /* Scanning Status (Bottom) */
+        #scan-bar { 
+            position: absolute; bottom: 40px; left: 5%; width: 90%; 
+            height: 2px; background: #004444; 
+        }
+        #scan-progress {
+            width: 0%; height: 100%; background: #00ffff;
+            box-shadow: 0 0 10px #00ffff;
+            animation: scan 2s infinite linear;
+        }
+
+        @keyframes flash { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+        @keyframes scan { 0% { width: 0%; opacity: 1; } 100% { width: 100%; opacity: 0; } }
+
+        /* Loading Screen */
         #loader {
-            position: absolute;
-            top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: #00d2ff; font-size: 1.5rem;
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #00ffff; font-size: 24px; text-align: center;
         }
     </style>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 </head>
 <body>
 
-    <div id="hud-container">
-        <div id="story-box">
-            <h1 id="chapter-title">INITIALIZING...</h1>
-            <div id="status-icon">⚠️</div>
-            <p id="narrative">Loading Neural Networks for Bio-Scan...</p>
-            <div id="instruction">Please Wait</div>
-            <div id="progress-container">
-                <div id="progress-bar"></div>
-            </div>
+    <video id="input_video" playsinline></video>
+    <canvas id="output_canvas"></canvas>
+
+    <div id="hud-layer">
+        <div id="vitals-panel" class="panel">
+            <div class="metric-label">Heart Rate (POS-Algo)</div>
+            <div id="bpm-val" class="metric-big">--</div>
+            <div id="bpm-conf" style="color:#888; margin-bottom: 10px;">Signal: Low</div>
+
+            <div class="metric-label">Respiration (Thoracic)</div>
+            <div id="resp-val" class="metric-big">--</div>
+            <div id="resp-conf" style="color:#888;">Signal: Low</div>
         </div>
+
+        <div id="trauma-panel" class="panel">
+            <div class="metric-label">Trauma / Hemorrhage</div>
+            <div id="bleed-alert" style="font-weight:bold; color:#00ff00;">NO ACTIVE BLEED</div>
+            
+            <div class="metric-label" style="margin-top:15px;">Skin Perfusion</div>
+            <div id="skin-hex">Analyzing...</div>
+            <div id="skin-swatch"></div>
+            <div id="shock-warning" style="display:none; color:red; font-weight:bold;">POSSIBLE SHOCK</div>
+        </div>
+
+        <div id="scan-bar"><div id="scan-progress"></div></div>
     </div>
 
-    <div id="loader">Booting Medical Interface...</div>
-    <video id="input_video"></video>
+    <div id="loader">INITIALIZING SENSORS...<br><small>Allow Camera Access</small></div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script>
+/**
+ * --------------------------------------------------------------------------
+ * UTILITIES: FILTERS & MATH
+ * --------------------------------------------------------------------------
+ */
+class BandpassFilter {
+    constructor(order, lowCutoff, highCutoff, sampleRate) {
+        this.x = new Array(order + 1).fill(0);
+        this.y = new Array(order + 1).fill(0);
+        this.calcCoefficients(lowCutoff, highCutoff, sampleRate);
+    }
+    calcCoefficients(low, high, rate) {
+        const omegaL = Math.tan(Math.PI * low / rate);
+        const omegaH = Math.tan(Math.PI * high / rate);
+        const center = Math.sqrt(omegaL * omegaH);
+        const width = omegaH - omegaL;
+        this.gain = width / (1 + width + center*center);
+        this.a1 = 2 * (center*center - 1) * this.gain / width;
+        this.a2 = (1 - width + center*center) * this.gain / width;
+    }
+    process(input) {
+        if(isNaN(input)) return 0;
+        this.x.unshift(input); this.x.pop();
+        let output = (this.x[0] - this.x[2]) * 1.0 - (this.y[0] * this.a1 + this.y[1] * this.a2);
+        this.y.unshift(output); this.y.pop();
+        return output;
+    }
+}
 
-    <script>
-        // --- 1. Story Engine Configuration ---
+// Filters assuming ~30FPS
+const hrFilter = new BandpassFilter(2, 0.7, 3.5, 30); // 42-210 BPM
+const respFilter = new BandpassFilter(2, 0.1, 0.6, 30); // 6-36 BrPM
+
+/**
+ * --------------------------------------------------------------------------
+ * CORE LOGIC
+ * --------------------------------------------------------------------------
+ */
+const canvas = document.getElementById('output_canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const videoElement = document.getElementById('input_video');
+
+// Buffers
+const ppgBuffer = []; 
+const respBuffer = [];
+let lastProcessTime = 0;
+
+// UI Elements
+const ui = {
+    bpm: document.getElementById('bpm-val'),
+    bpmConf: document.getElementById('bpm-conf'),
+    resp: document.getElementById('resp-val'),
+    respConf: document.getElementById('resp-conf'),
+    bleed: document.getElementById('bleed-alert'),
+    skinHex: document.getElementById('skin-hex'),
+    skinSwatch: document.getElementById('skin-swatch'),
+    shock: document.getElementById('shock-warning'),
+    loader: document.getElementById('loader')
+};
+
+// State
+let currentBpm = 0;
+let currentResp = 0;
+let frameCount = 0;
+
+function onResults(results) {
+    ui.loader.style.display = 'none';
+
+    // 1. Setup Canvas
+    canvas.width = videoElement.videoWidth;
+    canvas.height = videoElement.videoHeight;
+    
+    // 2. Spectrogram / Isolation Effect
+    // Draw the raw video first
+    ctx.save();
+    ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+    
+    // Apply environmental darkening (Spectrogram look)
+    // If segmentation mask exists, we darken everything EXCEPT the body
+    if (results.segmentationMask) {
+        ctx.globalCompositeOperation = 'destination-in';
+        ctx.drawImage(results.segmentationMask, 0, 0, canvas.width, canvas.height);
         
-        // The narrative follows standard Emergency Response Protocols
-        const STORY_STAGES = [
-            {
-                title: "Chapter 1: The Scene",
-                narrative: "You arrive at the ravine. The hiker is lying unconscious at the bottom. The environment is chaotic, visibility is low. You need to secure the scene before approaching.",
-                instruction: "Make a 'Open Palm' (High Five) to clear the fog and scan.",
-                trigger: "open",
-                shape: "cloud", // Random chaos
-                color: [0.5, 0.5, 0.5] // Grey fog
-            },
-            {
-                title: "Chapter 2: Massive Hemorrhage",
-                narrative: "SCAN COMPLETE. Patient has a severe arterial bleed on the right leg. Bright red blood is spurting. Immediate action required. Tourniquet application necessary.",
-                instruction: "Make a 'Fist' to apply pressure and tighten the tourniquet.",
-                trigger: "fist",
-                shape: "artery", // A pulsing cylinder
-                color: [1.0, 0.0, 0.0] // Red blood
-            },
-            {
-                title: "Chapter 3: Airway & Breathing",
-                narrative: "Bleeding controlled. Checking Vitals. The patient is not breathing effectively. The chest is not rising. You suspect a tension pneumothorax or obstruction.",
-                instruction: "Use 'Two Hands' (pull apart) to expand the lungs/chest cavity.",
-                trigger: "two_hands",
-                shape: "lungs", // Two spheres
-                color: [0.0, 0.8, 1.0] // Cyan Oxygen
-            },
-            {
-                title: "Chapter 4: Circulation (Pulse)",
-                narrative: "Airway is clear. Breathing assisted. Now monitoring heart rate. Pulse is thready and weak. We need to stabilize cardiac rhythm and keep them warm.",
-                instruction: "Make a 'Thumb Up' to stabilize the heart rate.",
-                trigger: "thumb",
-                shape: "heart", // Heart shape
-                color: [1.0, 0.2, 0.5] // Pink/Red
-            },
-            {
-                title: "Chapter 5: Fracture Stabilization",
-                narrative: "Vitals stable. Secondary survey reveals a compound fracture of the tibia. We must splint the leg to prevent further damage during transport.",
-                instruction: "Make a 'Peace Sign' to align the splint rigid supports.",
-                trigger: "peace",
-                shape: "splint", // A box/rectangular prism
-                color: [1.0, 0.8, 0.0] // Orange/Warning
-            },
-            {
-                title: "Chapter 6: Extraction",
-                narrative: "Patient packaged. Search and Rescue helicopter is inbound. Signal the pilot for the long-line extraction.",
-                instruction: "Point 'Index Finger' UP to guide the helicopter line.",
-                trigger: "point",
-                shape: "helix", // Double helix / Rotor
-                color: [0.0, 1.0, 0.0] // Green Success
-            },
-            {
-                title: "Mission Complete",
-                narrative: "Patient successfully extracted to Level 1 Trauma Center. Good work, Medic.",
-                instruction: "Rest. (Story Ended)",
-                trigger: "done",
-                shape: "sphere",
-                color: [1.0, 1.0, 1.0]
-            }
-        ];
-
-        let currentStageIndex = 0;
-        let actionProgress = 0; // 0 to 100
-        const PROGRESS_SPEED = 1.5; // How fast the bar fills when holding gesture
-        const DECAY_SPEED = 2.0; // How fast it drops if you let go
-
-        // --- 2. Three.js Visuals ---
-
-        const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x000000, 0.02);
-
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.z = 25;
-
-        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
-
-        // Particle Setup
-        const PARTICLE_COUNT = 12000;
-        const geometry = new THREE.BufferGeometry();
-        const positions = new Float32Array(PARTICLE_COUNT * 3);
-        const colors = new Float32Array(PARTICLE_COUNT * 3);
-        const sizes = new Float32Array(PARTICLE_COUNT);
-
-        // Current color trackers for lerping
-        const currentColor = new THREE.Color(0x555555);
-        const targetColor = new THREE.Color(0x555555);
-
-        // Generate Target Shapes
-        const shapeTargets = {
-            cloud: [],
-            artery: [],
-            lungs: [],
-            heart: [],
-            splint: [],
-            helix: [],
-            sphere: []
-        };
-
-        // Initialize Particles & Calculate Shapes
-        for (let i = 0; i < PARTICLE_COUNT; i++) {
-            // Initial Pos
-            positions[i * 3] = (Math.random() - 0.5) * 50;
-            positions[i * 3 + 1] = (Math.random() - 0.5) * 50;
-            positions[i * 3 + 2] = (Math.random() - 0.5) * 50;
-            
-            colors[i * 3] = 0.5;
-            colors[i * 3 + 1] = 0.5;
-            colors[i * 3 + 2] = 0.5;
-
-            sizes[i] = Math.random() * 0.2;
-
-            // 1. Cloud
-            shapeTargets.cloud.push((Math.random()-0.5)*30, (Math.random()-0.5)*20, (Math.random()-0.5)*20);
-
-            // 2. Artery (Cylinder with noise)
-            const angle = Math.random() * Math.PI * 2;
-            const r = 2 + Math.random() * 1; 
-            const h = (i / PARTICLE_COUNT) * 20 - 10;
-            shapeTargets.artery.push(r * Math.cos(angle), h, r * Math.sin(angle));
-
-            // 3. Lungs (Two Ellipsoids)
-            const side = (i % 2 === 0) ? 1 : -1;
-            const u = Math.random() * Math.PI * 2;
-            const v = Math.random() * Math.PI;
-            const lr = 4;
-            shapeTargets.lungs.push(
-                (lr * Math.sin(v) * Math.cos(u)) + (side * 4), // Offset x
-                (lr * 1.5 * Math.sin(v) * Math.sin(u)),        // Taller y
-                (lr * Math.cos(v))
-            );
-
-            // 4. Heart (Math Formula)
-            // x = 16sin^3(t), y = 13cos(t)-5cos(2t)-2cos(3t)-cos(4t)
-            // We need 3D, so we rotate it or layer it. Let's do a thick layering.
-            const t = Math.random() * Math.PI * 2;
-            const zOff = (Math.random() - 0.5) * 4;
-            const scale = 0.4;
-            const hx = 16 * Math.pow(Math.sin(t), 3);
-            const hy = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
-            shapeTargets.heart.push(hx * scale, hy * scale, zOff);
-
-            // 5. Splint (Rectangular Prism)
-            const sx = (Math.random() - 0.5) * 6;
-            const sy = (Math.random() - 0.5) * 18;
-            const sz = (Math.random() - 0.5) * 6;
-            // Hollow it out slightly
-            if(Math.random() > 0.5) {
-                 shapeTargets.splint.push(sx, sy, sz); // Solid-ish
-            } else {
-                 // Define edges
-                 shapeTargets.splint.push((Math.round(Math.random())*6)-3, sy, (Math.random()-0.5)*6);
-            }
-
-            // 6. Helix (Rotor/Line)
-            const hIdx = i / PARTICLE_COUNT * 40; 
-            const hAngle = i * 0.2;
-            shapeTargets.helix.push(
-                3 * Math.cos(hAngle),
-                (i / PARTICLE_COUNT) * 30 - 15,
-                3 * Math.sin(hAngle)
-            );
-            
-            // 7. Sphere (End)
-            const phi = Math.acos((Math.random() * 2) - 1);
-            const theta = Math.random() * Math.PI * 2;
-            const sr = 6;
-            shapeTargets.sphere.push(
-                sr * Math.sin(phi) * Math.cos(theta),
-                sr * Math.sin(phi) * Math.sin(theta),
-                sr * Math.cos(phi)
-            );
-        }
-
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-
-        // Custom Shader Material for glow effect
-        const material = new THREE.PointsMaterial({
-            size: 0.3,
-            vertexColors: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            transparent: true,
-            opacity: 0.8
-        });
-
-        const particleSystem = new THREE.Points(geometry, material);
-        scene.add(particleSystem);
-
-
-        // --- 3. Animation & Logic Loop ---
-
-        let time = 0;
+        // Restore context to draw background layer darkened
+        ctx.globalCompositeOperation = 'destination-over';
+        ctx.fillStyle = 'rgba(0, 20, 10, 0.85)'; // Dark green/black tint for environment
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         
-        function updateStoryUI() {
-            const stage = STORY_STAGES[currentStageIndex];
-            document.getElementById('chapter-title').innerText = stage.title;
-            document.getElementById('narrative').innerText = stage.narrative;
-            document.getElementById('instruction').innerText = "ACTION: " + stage.instruction;
-            
-            // Update target color
-            targetColor.setRGB(stage.color[0], stage.color[1], stage.color[2]);
-        }
+        ctx.globalCompositeOperation = 'source-over';
+    }
+    ctx.restore();
 
-        function advanceStory() {
-            if (currentStageIndex < STORY_STAGES.length - 1) {
-                currentStageIndex++;
-                actionProgress = 0;
-                updateStoryUI();
-                
-                // Sound effect trigger could go here
-            }
-        }
+    if (!results.poseLandmarks) {
+        drawScanningGrid(); // Visual filler if no body found
+        return;
+    }
 
-        function animate() {
-            requestAnimationFrame(animate);
-            time += 0.05;
+    const lm = results.poseLandmarks;
 
-            const stageData = STORY_STAGES[currentStageIndex];
-            const targetPos = shapeTargets[stageData.shape];
-            const currentPos = geometry.attributes.position.array;
-            const currentCols = geometry.attributes.color.array;
+    // 3. Extract Regions of Interest (ROIs)
+    const nose = lm[0];
+    const leftShoulder = lm[11];
+    const rightShoulder = lm[12];
+    
+    // Forehead ROI (approximate based on nose and eyes width)
+    const faceWidth = Math.abs(lm[7].x - lm[8].x) * canvas.width; 
+    const foreheadX = Math.floor(nose.x * canvas.width - faceWidth/2);
+    const foreheadY = Math.floor(nose.y * canvas.height - faceWidth); 
+    const foreheadW = Math.floor(faceWidth);
+    const foreheadH = Math.floor(faceWidth * 0.6);
 
-            // Lerp Color
-            currentColor.lerp(targetColor, 0.05);
+    // Chest ROI (between shoulders)
+    const chestX = Math.floor(rightShoulder.x * canvas.width);
+    const chestW = Math.floor((leftShoulder.x - rightShoulder.x) * canvas.width);
+    const chestY = Math.floor(rightShoulder.y * canvas.height);
+    const chestH = Math.floor(chestW * 0.8);
 
-            for (let i = 0; i < PARTICLE_COUNT; i++) {
-                const ix = i * 3;
-                
-                // Position Morphing
-                let tx = targetPos[ix];
-                let ty = targetPos[ix+1];
-                let tz = targetPos[ix+2];
+    // 4. Data Gathering & Drawing
+    
+    // A. Heart Rate (POS) & Skin Tone
+    if (foreheadW > 0 && foreheadH > 0) {
+        // Draw ROI Box
+        ctx.strokeStyle = '#00ff00';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(foreheadX, foreheadY, foreheadW, foreheadH);
 
-                // Add "Life" animations based on stage
-                if (stageData.shape === 'heart') {
-                    // Pulse effect
-                    const beat = 1 + Math.sin(time * 3) * 0.1; // heartbeat
-                    tx *= beat; ty *= beat; tz *= beat;
-                } else if (stageData.shape === 'artery') {
-                    // Spurting flow effect
-                    ty += Math.sin(time + i) * 0.5;
-                } else if (stageData.shape === 'lungs') {
-                    // Breathing effect
-                    const breath = 1 + Math.sin(time) * 0.05;
-                    tx *= breath; ty *= breath; tz *= breath;
-                } else if (stageData.shape === 'helix') {
-                    // Spin effect needs rotation matrix, simplified here by system rotation
-                }
+        const faceData = ctx.getImageData(foreheadX, foreheadY, foreheadW, foreheadH);
+        processFaceROI(faceData.data);
+    }
 
-                // Move particles
-                currentPos[ix] += (tx - currentPos[ix]) * 0.08;
-                currentPos[ix+1] += (ty - currentPos[ix+1]) * 0.08;
-                currentPos[ix+2] += (tz - currentPos[ix+2]) * 0.08;
+    // B. Respiration (Motion)
+    if (chestW > 0 && chestH > 0) {
+        // Draw ROI Box
+        ctx.strokeStyle = '#00ffff'; 
+        ctx.strokeRect(chestX, chestY, chestW, chestH);
 
-                // Color Update
-                currentCols[ix] = currentColor.r;
-                currentCols[ix+1] = currentColor.g;
-                currentCols[ix+2] = currentColor.b;
-            }
+        // We use the raw Y position of the shoulders/chest center as the signal
+        const midChestY = (leftShoulder.y + rightShoulder.y) / 2;
+        // Invert Y because screen Y goes down
+        processRespirationSignal(midChestY * canvas.height); 
+    }
 
-            geometry.attributes.position.needsUpdate = true;
-            geometry.attributes.color.needsUpdate = true;
+    // C. Bleeding Detection (Full Body Scan)
+    // We only scan inside the body bounding box to save CPU
+    const bodyBox = getBoundingBox(lm);
+    detectBleeding(bodyBox);
 
-            // Global Rotation
-            if (stageData.shape === 'helix') {
-                particleSystem.rotation.y -= 0.1; // Fast spin for chopper
-            } else {
-                particleSystem.rotation.y += 0.002; // Slow idle
-            }
+    // D. Skeleton Overlay
+    drawSkeleton(lm);
 
-            // Progress Bar UI
-            const bar = document.getElementById('progress-bar');
-            bar.style.width = actionProgress + '%';
+    frameCount++;
+}
 
-            // Visual feedback for holding gesture
-            if (actionProgress > 0) {
-                particleSystem.rotation.z = (Math.random() - 0.5) * (actionProgress / 500); // Shake slightly when working
-            } else {
-                particleSystem.rotation.z = 0;
-            }
+/**
+ * --------------------------------------------------------------------------
+ * ALGORITHM 1: HR (POS) & SKIN ANALYSIS
+ * --------------------------------------------------------------------------
+ */
+function processFaceROI(data) {
+    let sumR = 0, sumG = 0, sumB = 0;
+    const pixelCount = data.length / 4;
 
-            renderer.render(scene, camera);
-        }
+    for (let i = 0; i < data.length; i += 4) {
+        sumR += data[i];
+        sumG += data[i+1];
+        sumB += data[i+2];
+    }
 
-        // Initialize UI
-        updateStoryUI();
-        animate();
+    const avgR = sumR / pixelCount;
+    const avgG = sumG / pixelCount;
+    const avgB = sumB / pixelCount;
 
+    // 1. Skin Color Grading
+    const rgbStr = `rgb(${Math.round(avgR)},${Math.round(avgG)},${Math.round(avgB)})`;
+    ui.skinSwatch.style.background = rgbStr;
+    ui.skinHex.innerText = `R:${Math.round(avgR)} G:${Math.round(avgG)} B:${Math.round(avgB)}`;
+    
+    // Shock Logic (Very simple heuristic: High Green/Blue relative to Red, or very low saturation)
+    // Normal skin is R dominant.
+    if (avgG > avgR || avgB > avgR) {
+        ui.shock.style.display = 'block';
+        ui.shock.innerText = "WARNING: CYANOSIS";
+    } else if (avgR < 50 && avgG < 50 && avgB < 50) {
+        ui.shock.style.display = 'block';
+        ui.shock.innerText = "POOR LIGHT / PALLOR";
+    } else {
+        ui.shock.style.display = 'none';
+    }
 
-        // --- 4. Computer Vision Logic ---
+    // 2. HR Buffer
+    const now = Date.now();
+    ppgBuffer.push({ t: now, r: avgR, g: avgG, b: avgB });
+    if (ppgBuffer.length > 150) ppgBuffer.shift(); // 5s window
+
+    // Calculate HR every 1s
+    if (frameCount % 30 === 0) calculateHR();
+}
+
+function calculateHR() {
+    if (ppgBuffer.length < 30) return;
+
+    // POS Algorithm
+    const N = ppgBuffer.length;
+    let meanR = 0, meanG = 0, meanB = 0;
+    ppgBuffer.forEach(p => { meanR+=p.r; meanG+=p.g; meanB+=p.b; });
+    meanR/=N; meanG/=N; meanB/=N;
+
+    const signal = [];
+    const times = [];
+    let signalSum = 0;
+
+    for (let i=0; i<N; i++) {
+        const p = ppgBuffer[i];
+        const rn = p.r/(meanR||1);
+        const gn = p.g/(meanG||1);
+        const bn = p.b/(meanB||1);
         
-        function detectGesture(landmarks, handedness) {
-            // Simplified Gesture detection logic
-            const wrist = landmarks[0];
-            const thumbTip = landmarks[4];
-            const indexTip = landmarks[8];
-            const middleTip = landmarks[12];
-            const ringTip = landmarks[16];
-            const pinkyTip = landmarks[20];
+        // S = 3G - 2R - B (Standard POS projection)
+        let raw = 3*gn - 2*rn - bn;
+        let filtered = hrFilter.process(raw);
+        signal.push(filtered);
+        times.push(p.t);
+        signalSum += Math.abs(filtered);
+    }
 
-            const dist = (p1, p2) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
-            const isExtended = (tip, pip) => dist(landmarks[tip], wrist) > dist(landmarks[pip], wrist);
-
-            const iUp = isExtended(8, 6);
-            const mUp = isExtended(12, 10);
-            const rUp = isExtended(16, 14);
-            const pUp = isExtended(20, 18);
-            const tUp = isExtended(4, 2);
-
-            // FIST
-            if (!iUp && !mUp && !rUp && !pUp) return 'fist';
-            // OPEN PALM
-            if (iUp && mUp && rUp && pUp && tUp) return 'open';
-            // POINT
-            if (iUp && !mUp && !rUp && !pUp) return 'point';
-            // THUMB
-            if (tUp && !iUp && !mUp && !rUp && !pUp) return 'thumb';
-            // PEACE
-            if (iUp && mUp && !rUp && !pUp) return 'peace';
-            
-            return 'neutral';
-        }
-
-        const videoElement = document.getElementById('input_video');
-        const loader = document.getElementById('loader');
-
-        function onResults(results) {
-            loader.style.display = 'none';
-            
-            const stage = STORY_STAGES[currentStageIndex];
-            let detectedAction = null;
-
-            // 1. Detect Dual Hands first (Special case for Breathing stage)
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length === 2) {
-                const hand1 = results.multiHandLandmarks[0][9];
-                const hand2 = results.multiHandLandmarks[1][9];
-                const dist = Math.hypot(hand1.x - hand2.x, hand1.y - hand2.y);
-                
-                // If hands are apart and moving, trigger "two_hands"
-                if (dist > 0.3) detectedAction = 'two_hands';
-            }
-            
-            // 2. If no dual hand action, check single hand gestures
-            if (!detectedAction && results.multiHandLandmarks.length > 0) {
-                detectedAction = detectGesture(results.multiHandLandmarks[0]);
-            }
-
-            // 3. Game Logic: Check if detected matches required
-            if (detectedAction === stage.trigger) {
-                // Increase progress
-                actionProgress += PROGRESS_SPEED;
-                if (actionProgress >= 100) {
-                    advanceStory();
-                }
-            } else {
-                // Decay progress if they stop
-                if (actionProgress > 0) actionProgress -= DECAY_SPEED;
-                if (actionProgress < 0) actionProgress = 0;
+    // Peak Detection
+    const threshold = (signalSum / N) * 0.6;
+    const peaks = [];
+    let lastPeak = -1000;
+    
+    for(let i=1; i<signal.length-1; i++){
+        if(signal[i]>signal[i-1] && signal[i]>signal[i+1] && signal[i]>threshold){
+            if(times[i] - lastPeak > 300) { // Max 200 BPM
+                peaks.push(times[i]);
+                lastPeak = times[i];
             }
         }
+    }
 
-        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-        hands.onResults(onResults);
+    if (peaks.length > 1) {
+        const intervals = [];
+        for(let i=1; i<peaks.length; i++) intervals.push((peaks[i]-peaks[i-1])/1000);
+        const avgInt = intervals.reduce((a,b)=>a+b,0)/intervals.length;
+        const bpm = 60/avgInt;
 
-        const cameraFeed = new Camera(videoElement, {
-            onFrame: async () => await hands.send({image: videoElement}),
-            width: 640, height: 480
-        });
-        cameraFeed.start();
+        if (bpm > 40 && bpm < 220) {
+            currentBpm = Math.round(currentBpm * 0.7 + bpm * 0.3);
+            ui.bpm.innerText = currentBpm;
+            ui.bpmConf.innerText = "Signal: Locked";
+            ui.bpmConf.style.color = "#00ff00";
+        }
+    } else {
+        ui.bpmConf.innerText = "Signal: Acquiring...";
+        ui.bpmConf.style.color = "#ffff00";
+    }
+}
 
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
+/**
+ * --------------------------------------------------------------------------
+ * ALGORITHM 2: RESPIRATION (CHEST MOTION)
+ * --------------------------------------------------------------------------
+ */
+function processRespirationSignal(yVal) {
+    const now = Date.now();
+    // Use bandpass filter immediately on the raw coordinate
+    const filteredY = respFilter.process(yVal);
+    
+    respBuffer.push({ t: now, val: filteredY });
+    if(respBuffer.length > 300) respBuffer.shift();
 
-    </script>
+    if (frameCount % 30 === 0) calculateResp();
+}
+
+function calculateResp() {
+    if(respBuffer.length < 60) return;
+
+    // Zero-crossing / Peak detection on the filtered signal
+    const signal = respBuffer.map(b => b.val);
+    const times = respBuffer.map(b => b.t);
+    
+    let sumAmp = 0;
+    signal.forEach(v => sumAmp += Math.abs(v));
+    const threshold = (sumAmp / signal.length) * 0.5;
+
+    const peaks = [];
+    let lastPeak = -1000;
+
+    for(let i=1; i<signal.length-1; i++){
+        if(signal[i]>signal[i-1] && signal[i]>signal[i+1] && signal[i]>threshold){
+            if(times[i] - lastPeak > 1000) { // Max 60 BrPM
+                peaks.push(times[i]);
+                lastPeak = times[i];
+            }
+        }
+    }
+
+    if (peaks.length > 1) {
+        const intervals = [];
+        for(let i=1; i<peaks.length; i++) intervals.push((peaks[i]-peaks[i-1])/1000);
+        const avgInt = intervals.reduce((a,b)=>a+b,0)/intervals.length;
+        const brpm = 60/avgInt;
+
+        if (brpm > 5 && brpm < 60) {
+            currentResp = Math.round(currentResp * 0.8 + brpm * 0.2);
+            ui.resp.innerText = currentResp;
+            ui.respConf.innerText = "Signal: Locked";
+        }
+    }
+}
+
+/**
+ * --------------------------------------------------------------------------
+ * ALGORITHM 3: HEMORRHAGE / BLEEDING DETECTION
+ * --------------------------------------------------------------------------
+ */
+function getBoundingBox(lm) {
+    let minX=1, maxX=0, minY=1, maxY=0;
+    lm.forEach(p => {
+        if(p.x < minX) minX = p.x;
+        if(p.x > maxX) maxX = p.x;
+        if(p.y < minY) minY = p.y;
+        if(p.y > maxY) maxY = p.y;
+    });
+    return {
+        x: Math.floor(minX * canvas.width),
+        y: Math.floor(minY * canvas.height),
+        w: Math.floor((maxX - minX) * canvas.width),
+        h: Math.floor((maxY - minY) * canvas.height)
+    };
+}
+
+function detectBleeding(bbox) {
+    // Safety check boundaries
+    if (bbox.w <= 0 || bbox.h <= 0) return;
+    
+    // Grab data only from the body bounding box
+    const imgData = ctx.getImageData(bbox.x, bbox.y, bbox.w, bbox.h);
+    const data = imgData.data;
+    const w = bbox.w;
+    const h = bbox.h;
+
+    let bleedPixels = 0;
+    // Optimization: Stride of 4 (check every 4th pixel) to maintain FPS
+    for (let i = 0; i < data.length; i += 16) { 
+        const r = data[i];
+        const g = data[i+1];
+        const b = data[i+2];
+
+        // "Fresh Blood" Heuristic:
+        // 1. High Red
+        // 2. Red significantly higher than Green (Blood is not yellow/orange)
+        // 3. Red significantly higher than Blue (Blood is not purple)
+        // 4. Moderate to High Saturation
+        if (r > 100 && r > g * 1.6 && r > b * 2.0) {
+            bleedPixels++;
+            // Mark it on screen for visual feedback (optional, costly)
+            data[i] = 255; data[i+1] = 0; data[i+2] = 0; // Pure red highlight
+        }
+    }
+
+    // Threshold: if > 0.5% of body area looks like blood
+    const threshold = (w * h) * 0.005 / 4; // divide by 4 due to stride
+    
+    if (bleedPixels > threshold) {
+        ui.bleed.innerText = "DETECTED";
+        ui.bleed.style.color = "red";
+        ui.bleed.classList.add('alert');
+        
+        // Put the modified pixels back to visualize the detection
+        ctx.putImageData(imgData, bbox.x, bbox.y);
+        
+        // Draw warning box
+        ctx.strokeStyle = "red";
+        ctx.lineWidth = 4;
+        ctx.strokeRect(bbox.x, bbox.y, bbox.w, bbox.h);
+    } else {
+        ui.bleed.innerText = "NO ACTIVE BLEED";
+        ui.bleed.style.color = "#00ff00";
+        ui.bleed.classList.remove('alert');
+    }
+}
+
+/**
+ * --------------------------------------------------------------------------
+ * VISUALIZATION & SETUP
+ * --------------------------------------------------------------------------
+ */
+function drawSkeleton(lm) {
+    ctx.fillStyle = '#00ffff';
+    ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+    ctx.lineWidth = 2;
+
+    const connections = [
+        [11,12], [11,13], [13,15], [12,14], [14,16], // Arms
+        [11,23], [12,24], [23,24], // Torso
+        [23,25], [24,26], [25,27], [26,28] // Legs
+    ];
+
+    connections.forEach(pair => {
+        const A = lm[pair[0]];
+        const B = lm[pair[1]];
+        if(A.visibility > 0.5 && B.visibility > 0.5) {
+            ctx.beginPath();
+            ctx.moveTo(A.x * canvas.width, A.y * canvas.height);
+            ctx.lineTo(B.x * canvas.width, B.y * canvas.height);
+            ctx.stroke();
+        }
+    });
+}
+
+function drawScanningGrid() {
+    ctx.strokeStyle = 'rgba(0, 255, 255, 0.1)';
+    ctx.lineWidth = 1;
+    const step = 50;
+    const timeOffset = (Date.now() / 20) % step;
+    
+    for (let x = 0; x < canvas.width; x += step) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+    }
+    for (let y = timeOffset; y < canvas.height; y += step) {
+        ctx.beginPath();
+        ctx.moveTo(0, y); ctx.lineTo(canvas.width, y);
+        ctx.stroke();
+    }
+    
+    ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+    ctx.font = "20px Courier";
+    ctx.fillText("SEARCHING FOR SUBJECT...", canvas.width/2 - 120, canvas.height/2);
+}
+
+// Initialization
+const pose = new Pose({locateFile: (file) => {
+    return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+}});
+
+pose.setOptions({
+    modelComplexity: 1,
+    smoothLandmarks: true,
+    enableSegmentation: true, // Critical for "Spectrogram" isolation
+    smoothSegmentation: true,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+});
+pose.onResults(onResults);
+
+const camera = new Camera(videoElement, {
+    onFrame: async () => {
+        await pose.send({image: videoElement});
+    },
+    width: 1280,
+    height: 720,
+    facingMode: 'environment' // BACK CAMERA REQUEST
+});
+
+camera.start();
+
+// Handle Resize
+window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+});
+</script>
 </body>
 </html>
