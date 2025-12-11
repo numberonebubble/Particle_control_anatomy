@@ -46,6 +46,25 @@
         #trauma-panel { top: 20px; right: 20px; width: 180px; text-align: right; }
         #skin-swatch { width: 100%; height: 20px; margin-top: 5px; border: 1px solid #555; }
 
+        /* Color / Light Panel (Bottom Right) */
+        #color-panel { 
+            bottom: 20px; 
+            right: 20px; 
+            width: 220px; 
+            text-align: left;
+        }
+        .color-swatch {
+            width: 100%;
+            height: 12px;
+            border: 1px solid #555;
+            margin-top: 2px;
+            margin-bottom: 2px;
+        }
+        .color-readout, .color-intensity {
+            font-size: 10px;
+            line-height: 1.3;
+        }
+
         /* Scanning Status (Bottom) */
         #scan-bar { 
             position: absolute; bottom: 40px; left: 5%; width: 90%; 
@@ -96,6 +115,23 @@
             <div id="shock-warning" style="display:none; color:red; font-weight:bold;">POSSIBLE SHOCK</div>
         </div>
 
+        <!-- New Color & Light Panel -->
+        <div id="color-panel" class="panel">
+            <div class="metric-label">Color &amp; Light</div>
+            <div style="margin-top:8px;">
+                <div style="font-size:10px; text-transform:uppercase; opacity:0.7;">Body</div>
+                <div id="body-swatch" class="color-swatch"></div>
+                <div id="body-color" class="color-readout">R: -- G: -- B: --</div>
+                <div id="body-intensity" class="color-intensity">Luma: --</div>
+            </div>
+            <div style="margin-top:10px;">
+                <div style="font-size:10px; text-transform:uppercase; opacity:0.7;">Environment</div>
+                <div id="env-swatch" class="color-swatch"></div>
+                <div id="env-color" class="color-readout">R: -- G: -- B: --</div>
+                <div id="env-intensity" class="color-intensity">Luma: --</div>
+            </div>
+        </div>
+
         <div id="scan-bar"><div id="scan-progress"></div></div>
     </div>
 
@@ -144,6 +180,10 @@ const canvas = document.getElementById('output_canvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const videoElement = document.getElementById('input_video');
 
+// Offscreen canvas for segmentation sampling (for color stats)
+let segCanvas = null;
+let segCtx = null;
+
 // Buffers
 const ppgBuffer = []; 
 const respBuffer = [];
@@ -159,7 +199,14 @@ const ui = {
     skinHex: document.getElementById('skin-hex'),
     skinSwatch: document.getElementById('skin-swatch'),
     shock: document.getElementById('shock-warning'),
-    loader: document.getElementById('loader')
+    loader: document.getElementById('loader'),
+    // New Color / Light UI
+    bodyColor: document.getElementById('body-color'),
+    envColor: document.getElementById('env-color'),
+    bodyIntensity: document.getElementById('body-intensity'),
+    envIntensity: document.getElementById('env-intensity'),
+    bodySwatch: document.getElementById('body-swatch'),
+    envSwatch: document.getElementById('env-swatch')
 };
 
 // State
@@ -174,34 +221,40 @@ function onResults(results) {
     canvas.width = videoElement.videoWidth;
     canvas.height = videoElement.videoHeight;
     
-    // 2. Spectrogram / Isolation Effect
-    // Draw the raw video first
-    ctx.save();
+    // 2. Draw raw video frame first (full scene kept intact)
     ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-    
-    // Apply environmental darkening (Spectrogram look)
-    // If segmentation mask exists, we darken everything EXCEPT the body
-    if (results.segmentationMask) {
-        ctx.globalCompositeOperation = 'destination-in';
-        ctx.drawImage(results.segmentationMask, 0, 0, canvas.width, canvas.height);
-        
-        // Restore context to draw background layer darkened
-        ctx.globalCompositeOperation = 'destination-over';
-        ctx.fillStyle = 'rgba(0, 20, 10, 0.85)'; // Dark green/black tint for environment
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        ctx.globalCompositeOperation = 'source-over';
-    }
-    ctx.restore();
 
+    // 3. Compute color spectrum & light intensity (using raw scene)
+    if (frameCount % 10 === 0) { // every ~10 frames to save CPU
+        computeColorSpectrum(results);
+    }
+
+    // 4. Environment Shading with Body Preserved
+    if (results.segmentationMask) {
+        ctx.save();
+        // Slight dimming across the whole scene
+        ctx.fillStyle = 'rgba(0, 20, 10, 0.45)'; // adjust alpha to taste
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Punch a hole where the body is so subject stays bright
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.drawImage(results.segmentationMask, 0, 0, canvas.width, canvas.height);
+
+        // Reset composite mode
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.restore();
+    }
+
+    // If no landmarks, draw scanning grid and bail
     if (!results.poseLandmarks) {
-        drawScanningGrid(); // Visual filler if no body found
+        drawScanningGrid();
+        frameCount++;
         return;
     }
 
     const lm = results.poseLandmarks;
 
-    // 3. Extract Regions of Interest (ROIs)
+    // 5. Extract Regions of Interest (ROIs)
     const nose = lm[0];
     const leftShoulder = lm[11];
     const rightShoulder = lm[12];
@@ -219,7 +272,7 @@ function onResults(results) {
     const chestY = Math.floor(rightShoulder.y * canvas.height);
     const chestH = Math.floor(chestW * 0.8);
 
-    // 4. Data Gathering & Drawing
+    // 6. Data Gathering & Drawing
     
     // A. Heart Rate (POS) & Skin Tone
     if (foreheadW > 0 && foreheadH > 0) {
@@ -253,6 +306,92 @@ function onResults(results) {
     drawSkeleton(lm);
 
     frameCount++;
+}
+
+/**
+ * --------------------------------------------------------------------------
+ * COLOR SPECTRUM & LIGHT INTENSITY
+ * --------------------------------------------------------------------------
+ */
+function computeColorSpectrum(results) {
+    if (!canvas.width || !canvas.height) return;
+
+    // Offscreen segmentation canvas
+    if (!segCanvas) {
+        segCanvas = document.createElement('canvas');
+        segCtx = segCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    segCanvas.width = canvas.width;
+    segCanvas.height = canvas.height;
+
+    let segData = null;
+
+    if (results.segmentationMask) {
+        segCtx.clearRect(0, 0, segCanvas.width, segCanvas.height);
+        segCtx.drawImage(results.segmentationMask, 0, 0, segCanvas.width, segCanvas.height);
+        segData = segCtx.getImageData(0, 0, segCanvas.width, segCanvas.height).data;
+    }
+
+    // Get current frame pixels (raw scene)
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+
+    let bodyR = 0, bodyG = 0, bodyB = 0, bodyY = 0, bodyCount = 0;
+    let envR = 0, envG = 0, envB = 0, envY = 0, envCount = 0;
+
+    const stride = 16; // sample every 16th pixel for performance
+
+    for (let i = 0; i < imgData.length; i += 4 * stride) {
+        const r = imgData[i];
+        const g = imgData[i + 1];
+        const b = imgData[i + 2];
+
+        // Luminance (approximate light intensity)
+        const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+        let inBody = false;
+        if (segData) {
+            const a = segData[i + 3]; // alpha channel: body mask
+            if (a > 128) inBody = true;
+        }
+
+        if (inBody) {
+            bodyR += r; bodyG += g; bodyB += b; bodyY += y; bodyCount++;
+        } else {
+            envR += r; envG += g; envB += b; envY += y; envCount++;
+        }
+    }
+
+    // Update UI - Body
+    if (bodyCount > 0) {
+        const br = Math.round(bodyR / bodyCount);
+        const bg = Math.round(bodyG / bodyCount);
+        const bb = Math.round(bodyB / bodyCount);
+        const by = Math.round(bodyY / bodyCount); // 0–255
+
+        ui.bodySwatch.style.background = `rgb(${br},${bg},${bb})`;
+        ui.bodyColor.textContent = `R: ${br} G: ${bg} B: ${bb}`;
+        ui.bodyIntensity.textContent = `Luma: ${by}`;
+    } else {
+        ui.bodySwatch.style.background = 'transparent';
+        ui.bodyColor.textContent = 'R: -- G: -- B: --';
+        ui.bodyIntensity.textContent = 'Luma: --';
+    }
+
+    // Update UI - Environment
+    if (envCount > 0) {
+        const er = Math.round(envR / envCount);
+        const eg = Math.round(envG / envCount);
+        const eb = Math.round(envB / envCount);
+        const ey = Math.round(envY / envCount);
+
+        ui.envSwatch.style.background = `rgb(${er},${eg},${eb})`;
+        ui.envColor.textContent = `R: ${er} G: ${eg} B: ${eb}`;
+        ui.envIntensity.textContent = `Luma: ${ey}`;
+    } else {
+        ui.envSwatch.style.background = 'transparent';
+        ui.envColor.textContent = 'R: -- G: -- B: --';
+        ui.envIntensity.textContent = 'Luma: --';
+    }
 }
 
 /**
