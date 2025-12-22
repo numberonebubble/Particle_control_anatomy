@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Curiosity Field (Gestures v2)</title>
+  <title>Curiosity Field (Gestures v2.1)</title>
   <style>
     html, body { margin:0; padding:0; overflow:hidden; background:#05060a; }
     #hud {
@@ -12,7 +12,7 @@
       letter-spacing: .2px; font-size: 13px;
       background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.12);
       border-radius: 14px; padding: 12px 14px; backdrop-filter: blur(10px);
-      user-select:none; pointer-events:none; max-width: 380px;
+      user-select:none; pointer-events:none; max-width: 420px;
     }
     #hud b { color:#fff; }
     #badge {
@@ -100,7 +100,6 @@
         return (t >>> 0) / 4294967296;
       };
     }
-
     const runSalt = `${Date.now()}-${Math.random()}-${navigator.userAgent}`;
     const seedGen = xmur3(runSalt);
     const rand = sfc32(seedGen(), seedGen(), seedGen(), seedGen());
@@ -113,7 +112,6 @@
       while(v===0) v=rand();
       return Math.sqrt(-2.0*Math.log(u))*Math.cos(2.0*Math.PI*v);
     }
-
     function smoothStep(prev, next, a=0.18) { return lerp(prev, next, a); }
 
     // ============================================================
@@ -141,7 +139,7 @@
     scene.add(light);
 
     // ============================================================
-    // 2) Particle Field (higher complexity)
+    // 2) Particle Field
     // ============================================================
     const N = 1600;
     const positions = new Float32Array(N * 3);
@@ -186,29 +184,28 @@
     // ============================================================
     // 3) Emergent micro-objects: Filaments (LineSegments)
     // ============================================================
-    const FIL_MAX = 700; // number of line segments
-    const filPos = new Float32Array(FIL_MAX * 2 * 3); // each segment has 2 endpoints
+    const FIL_MAX = 700;
+    const filPos = new Float32Array(FIL_MAX * 2 * 3);
     const filGeom = new THREE.BufferGeometry();
     filGeom.setAttribute("position", new THREE.BufferAttribute(filPos, 3));
+
+    // Start filaments cool-white; we'll warm them when active
     const filMat = new THREE.LineBasicMaterial({
       color: 0xffffff,
       transparent: true,
       opacity: 0.0,
       blending: THREE.AdditiveBlending
     });
+
     const filLines = new THREE.LineSegments(filGeom, filMat);
     scene.add(filLines);
 
     const filEl = document.getElementById("fil");
 
-    // Create filaments from local coherence: connect particles with similar velocity direction
     function updateFilaments(coh, strength01) {
-      // strength01: 0..1 controls how many segments and opacity
       const want = Math.floor(lerp(0, FIL_MAX, strength01));
       filEl.textContent = String(want);
 
-      // Sample candidate pairs cheaply
-      // Heuristic: pick random particles, connect to a nearby particle index with similar phase and velocity direction
       let w = 0;
       for (let s=0; s<want; s++){
         const i = Math.floor(rand()*N);
@@ -218,12 +215,10 @@
         const x1 = positions[ix],   y1 = positions[ix+1],   z1 = positions[ix+2];
         const x2 = positions[jx],   y2 = positions[jx+1],   z2 = positions[jx+2];
 
-        // local gating
         const dx = x2-x1, dy=y2-y1, dz=z2-z1;
         const d2 = dx*dx+dy*dy+dz*dz;
-        if (d2 > 0.35) { s--; continue; } // too far: resample
+        if (d2 > 0.35) { s--; continue; }
 
-        // velocity alignment gating
         const vix = velocities[ix], viy = velocities[ix+1], viz = velocities[ix+2];
         const vjx = velocities[jx], vjy = velocities[jx+1], vjz = velocities[jx+2];
         const mi = Math.sqrt(vix*vix+viy*viy+viz*viz) + 1e-6;
@@ -236,11 +231,18 @@
         filPos[w++] = x2; filPos[w++] = y2; filPos[w++] = z2;
       }
 
-      // Clear remainder
       for (; w < filPos.length; w++) filPos[w] = 0;
 
       filGeom.attributes.position.needsUpdate = true;
       filMat.opacity = 0.02 + 0.28 * strength01;
+
+      // Warm the filament tint slightly as it strengthens (subtle)
+      // Cool white -> warm ember-white
+      const warm = strength01;
+      const r = lerp(1.0, 1.0, warm);
+      const g = lerp(1.0, 0.80, warm);
+      const b = lerp(1.0, 0.55, warm);
+      filMat.color.setRGB(r, g, b);
     }
 
     // ============================================================
@@ -249,41 +251,34 @@
     const t0 = now();
     const END_AT_MS = 95000;
 
-    // Jittered physics parameters (per-run “DNA”)
-    let alpha   = randf(1.00, 1.65);   // radial strength
-    let beta    = randf(0.70, 1.20);   // swirl strength
-    let gamma   = randf(0.16, 0.30);   // alignment strength
-    let noise   = randf(0.012, 0.022); // brownian
+    let alpha   = randf(1.00, 1.65);
+    let beta    = randf(0.70, 1.20);
+    let gamma   = randf(0.16, 0.30);
+    let noise   = randf(0.012, 0.022);
     let damping = randf(0.982, 0.989);
 
-    // Filament emergence threshold jitter
     const filThresh = randf(0.44, 0.56);
     const filGrowSpan = randf(0.10, 0.18);
 
-    // Personalized shift trigger jitter
     const stableCohThresh = randf(0.46, 0.58);
-    const stableHoldMs = randf(2400, 4200); // must be stable for this long
-    const shiftLatestMs = randf(65000, 78000); // hard cap fallback
+    const stableHoldMs = randf(2400, 4200);
+    const shiftLatestMs = randf(65000, 78000);
 
-    // Choose shift type (anti-memorization)
-    // shiftType: "PINCH_SIGN" or "SWIRL_SIGN" or "COUPLING_DROP"
     const shiftTypeRoll = rand();
     const shiftType = shiftTypeRoll < 0.45 ? "PINCH_SIGN" : (shiftTypeRoll < 0.85 ? "SWIRL_SIGN" : "COUPLING_DROP");
 
     let pinchSign = +1;
     let swirlSign = +1;
 
-    // Left-hand modifiers (context)
     let modCoupling = 1.0;
     let modRadius   = 1.0;
     let modAxisLock = 0.0;
 
-    // Personalized shift tracking
     let shifted = false;
     let stableSince = null;
 
     // ============================================================
-    // 5) Hand tracking (MediaPipe)
+    // 5) Hand tracking
     // ============================================================
     const videoEl = document.getElementById("video");
     const badgeEl = document.getElementById("badge");
@@ -294,11 +289,9 @@
       const dx = a.x - b.x, dy = a.y - b.y;
       return dx*dx + dy*dy;
     }
-
     function fingerExtended(lm, tipIdx, pipIdx) {
       return lm[tipIdx].y < lm[pipIdx].y;
     }
-
     function classifyGesture(lm) {
       const idxExt  = fingerExtended(lm, 8, 6);
       const midExt  = fingerExtended(lm, 12, 10);
@@ -365,7 +358,7 @@
 
       for (let i=0;i<results.multiHandLandmarks.length;i++){
         const lm = results.multiHandLandmarks[i];
-        const handed = results.multiHandedness[i].label; // "Left"/"Right"
+        const handed = results.multiHandedness[i].label;
         if (handed === "Right") updateHand("right", lm);
         if (handed === "Left")  updateHand("left",  lm);
       }
@@ -392,7 +385,59 @@
     });
 
     // ============================================================
-    // 6) Logging for CI (plus anti-fake instrumentation)
+    // 6) Combo inventory logger (counts + timeline)
+    // ============================================================
+    const VALID_L = new Set(["OPEN","FIST","PINCH","POINT","UNKNOWN","NONE"]);
+    const VALID_R = new Set(["OPEN","FIST","PINCH","POINT","UNKNOWN","NONE"]);
+
+    const comboCounts = new Map(); // key: "L=OPEN|R=PINCH"
+    const comboTimeline = [];      // events: {t, phase, L, R, coh}
+
+    let lastComboKey = null;
+    let lastComboChangeT = 0;
+
+    function comboKey(L, R) { return `L=${L}|R=${R}`; }
+
+    function recordComboEvent(t, phaseLabel, L, R, coh) {
+      if (!VALID_L.has(L)) L = "UNKNOWN";
+      if (!VALID_R.has(R)) R = "UNKNOWN";
+
+      const key = comboKey(L, R);
+
+      // Count only meaningful combos where right hand is doing a known gesture
+      // (This prevents noise from spamming your inventory.)
+      const meaningful = (R !== "NONE" && R !== "UNKNOWN");
+
+      // Debounce: record a "combo event" only when combo changes and holds for a beat
+      const changed = (key !== lastComboKey);
+      if (changed) {
+        lastComboKey = key;
+        lastComboChangeT = t;
+        return;
+      }
+
+      // held long enough?
+      if (!meaningful) return;
+      if (t - lastComboChangeT < 250) return; // 250ms hold
+
+      // Record an event at most once per hold window
+      const lastEvt = comboTimeline.at(-1);
+      if (lastEvt && lastEvt.key === key && (t - lastEvt.t) < 600) return;
+
+      // increment count
+      comboCounts.set(key, (comboCounts.get(key) || 0) + 1);
+
+      comboTimeline.push({
+        t: Math.round(t),
+        phase: phaseLabel,
+        L, R,
+        coh: +coh.toFixed(3),
+        key
+      });
+    }
+
+    // ============================================================
+    // 7) Logging for CI + entropy proxy
     // ============================================================
     const logs = {
       t: [],
@@ -405,15 +450,36 @@
       leftX: [],
       leftY: [],
       phase: [],
-      // derived: action entropy proxy (binning hand position)
-      actEntropy: []
+      actEntropy: [],
+      filStrength: []
     };
 
+    // Action entropy proxy: bin right-hand positions into 8x8 grid
+    const BIN = 8;
+    const binCounts = new Array(BIN*BIN).fill(0);
+    function updateEntropySample(rx, ry) {
+      const nx = clamp((rx/3.3 + 0.5), 0, 0.999);
+      const ny = clamp((-ry/2.1 + 0.5), 0, 0.999);
+      const bx = Math.floor(nx * BIN);
+      const by = Math.floor(ny * BIN);
+      binCounts[by*BIN + bx]++;
+
+      let total = 0;
+      for (const c of binCounts) total += c;
+
+      let H = 0;
+      for (const c of binCounts) {
+        if (!c) continue;
+        const p = c / total;
+        H += -p * Math.log(p);
+      }
+      return H / Math.log(BIN*BIN);
+    }
+
     // ============================================================
-    // 7) Gesture grammar combos -> physics intent
+    // 8) Gesture grammar
     // ============================================================
     function applyLeftModifiers(g) {
-      // defaults
       modCoupling = 1.0;
       modRadius   = 1.0;
       modAxisLock = 0.0;
@@ -424,51 +490,31 @@
       else if (g === "POINT") { modAxisLock = 1.0; }
     }
 
-    // Output intensities for each force channel based on (L, R)
     function grammar(L, R, handSpeed) {
       const sp = clamp(handSpeed, 0.0, 0.22);
       const base = clamp(0.65 + sp*3.0, 0.55, 1.9);
 
-      // channels
       let radial = 0, swirl = 0, pulse = 0, beam = 0;
-      let alignBoost = 0;     // extra alignment coupling
-      let noiseBoost = 0;     // extra turbulence
-      let filamentBoost = 0;  // promotes filaments
+      let alignBoost = 0;
+      let noiseBoost = 0;
+      let filamentBoost = 0;
 
       if (R === "PINCH") radial = 1.0 * base;
       else if (R === "OPEN") swirl = 1.0 * base;
       else if (R === "FIST") pulse = 1.0 * base;
       else if (R === "POINT") beam = 1.0 * base;
 
-      // Modifiers by left hand context
       if (L === "OPEN") {
-        // cohere
-        radial *= 1.15;
-        swirl  *= 1.18;
-        pulse  *= 0.85; // cleaner pulse
-        beam   *= 1.10;
+        radial *= 1.15; swirl *= 1.18; pulse *= 0.85; beam *= 1.10;
         alignBoost = 0.10 * base;
         filamentBoost = 0.20 * base;
       } else if (L === "FIST") {
-        // disrupt
-        radial *= 0.85;
-        swirl  *= 1.15;
-        pulse  *= 1.25;
-        beam   *= 1.05;
+        radial *= 0.85; swirl *= 1.15; pulse *= 1.25; beam *= 1.05;
         noiseBoost = 0.012 * base;
       } else if (L === "PINCH") {
-        // precision
-        radial *= 1.25;
-        swirl  *= 1.10;
-        pulse  *= 0.95;
-        beam   *= 1.20;
-        // radius is handled separately via modRadius
+        radial *= 1.25; swirl *= 1.10; pulse *= 0.95; beam *= 1.20;
       } else if (L === "POINT") {
-        // symmetry constraint
-        radial *= 1.10;
-        swirl  *= 1.08;
-        pulse  *= 0.90;
-        beam   *= 1.15;
+        radial *= 1.10; swirl *= 1.08; pulse *= 0.90; beam *= 1.15;
         alignBoost = 0.06 * base;
       }
 
@@ -476,7 +522,7 @@
     }
 
     // ============================================================
-    // 8) Physics / visuals
+    // 9) Physics / visuals
     // ============================================================
     function computeCoherence() {
       let mx=0, my=0, mz=0;
@@ -514,13 +560,32 @@
       }
     }
 
-    function updateColorsFromCoherence(coh) {
+    // Colour shift when filaments form:
+    // cool palette -> warmer ember palette as filStrength rises
+    function updateColorsFromCoherenceAndFilaments(coh, filStrength) {
       const brightness = clamp(0.30 + coh*0.90, 0.22, 1.0);
+
+      // Warm tint strength is driven by filaments
+      const warm = clamp(filStrength, 0, 1);
+
+      // Two base palettes:
+      // cool: (r,g,b) bias ~ (0.18,0.30,0.72)
+      // warm: (r,g,b) bias ~ (0.95,0.55,0.25) but we keep it tasteful
+      const baseCool = { r: 0.18, g: 0.30, b: 0.72 };
+      const baseWarm = { r: 0.95, g: 0.62, b: 0.28 };
+
       for (let i=0;i<N;i++){
-        const p = (phase[i] * 0.5 + 0.5);
-        const r = lerp(0.18, 0.97, brightness) * lerp(0.62, 1.0, p);
-        const g = lerp(0.30, 0.99, brightness) * lerp(0.74, 1.0, 1.0-p*0.35);
-        const b = lerp(0.72, 1.00, brightness);
+        const p = (phase[i] * 0.5 + 0.5); // 0..1 micro-variation
+
+        const br = lerp(baseCool.r, baseWarm.r, warm);
+        const bg = lerp(baseCool.g, baseWarm.g, warm);
+        const bb = lerp(baseCool.b, baseWarm.b, warm);
+
+        // brightness and phase micro-variation
+        const r = lerp(br, 0.98, brightness) * lerp(0.62, 1.0, p);
+        const g = lerp(bg, 0.99, brightness) * lerp(0.74, 1.0, 1.0-p*0.30);
+        const b = lerp(bb, 1.00, brightness) * lerp(0.75, 1.0, 0.55 + 0.45*(1.0-warm));
+
         colors[3*i+0] = r;
         colors[3*i+1] = g;
         colors[3*i+2] = b;
@@ -540,41 +605,13 @@
       }
     }
 
-    // Action entropy proxy: bin right-hand positions into 8x8 grid
-    const BIN = 8;
-    const binCounts = new Array(BIN*BIN).fill(0);
-    function updateEntropySample(rx, ry) {
-      // map world coords roughly to [-1.6..1.6] x [-1.05..1.05]
-      const nx = clamp((rx/3.3 + 0.5), 0, 0.999);
-      const ny = clamp((-ry/2.1 + 0.5), 0, 0.999);
-      const bx = Math.floor(nx * BIN);
-      const by = Math.floor(ny * BIN);
-      binCounts[by*BIN + bx]++;
-
-      let total = 0;
-      for (const c of binCounts) total += c;
-
-      let H = 0;
-      for (const c of binCounts) {
-        if (!c) continue;
-        const p = c / total;
-        H += -p * Math.log(p);
-      }
-      // normalize by log(K)
-      return H / Math.log(BIN*BIN);
-    }
-
     // ============================================================
-    // 9) Personalized shift logic
+    // 10) Personalized shift logic
     // ============================================================
     function maybeTriggerShift(t, coh, phaseLabel) {
       if (shifted) return;
-
-      // Only allow shift once user has time to explore
       if (t < 18000) return;
 
-      // Consider "stable" when coherence above threshold
-      // and right-hand presence is on (active exploration)
       const active = handState.right.present;
 
       if (active && coh >= stableCohThresh && phaseLabel !== "C") {
@@ -589,7 +626,6 @@
         stableSince = null;
       }
 
-      // Fallback hard cap
       if (t >= shiftLatestMs) {
         shifted = true;
         applyShift();
@@ -597,24 +633,21 @@
     }
 
     function applyShift() {
-      // Silent regime change — choose by shiftType
       if (shiftType === "PINCH_SIGN") pinchSign *= -1;
       else if (shiftType === "SWIRL_SIGN") swirlSign *= -1;
       else if (shiftType === "COUPLING_DROP") gamma *= 0.65;
 
-      // Also micro-jitter noise slightly to mask shift footprint while preserving detectability
       noise *= randf(0.92, 1.12);
     }
 
     // ============================================================
-    // 10) CI computation (unchanged skeleton, but includes entropy)
+    // 11) CI computation (same as v2, includes entropy + filStrength)
     // ============================================================
     function computeCI() {
       const norm01 = (x, a, b) => clamp((x - a) / (b - a + 1e-9), 0, 1);
       const T = logs.t.length;
       if (T < 12) return null;
 
-      // approximate shift moment from logs.phase transitions (A/B -> C)
       let shiftT = null;
       for (let i=0;i<T;i++){
         if (logs.phase[i] === "C") { shiftT = logs.t[i]; break; }
@@ -626,9 +659,9 @@
         if (logs.t[i] < shiftT) pre.push(i);
         else post.push(i);
       }
+
       const mean = (arr, f) => arr.reduce((s,i)=>s+f(i),0)/(arr.length||1);
       const slope = (arr, f) => {
-        const n = arr.length||1;
         const mt = mean(arr, i=>logs.t[i]);
         const my = mean(arr, i=>f(i));
         let num=0, den=0;
@@ -640,24 +673,21 @@
         return num/(den+1e-9);
       };
 
-      // Gesture diversity (exploration)
       const uniq = (arr) => new Set(arr).size;
       const rightGuniq = uniq(logs.rightGesture.filter(g=>g!=="UNKNOWN" && g!=="NONE"));
       const leftGuniq  = uniq(logs.leftGesture.filter(g=>g!=="UNKNOWN" && g!=="NONE"));
+
       const entEarly = mean(pre.filter(i=>logs.t[i]<25000), i=>logs.actEntropy[i] ?? 0);
       const E = norm01((rightGuniq + 0.7*leftGuniq + 1.2*entEarly), 1.0, 5.5);
 
-      // Model formation: coherence slope early + entropy drop
       const early = pre.filter(i => logs.t[i] < 35000);
       const cohSlopeEarly = slope(early, i=>logs.coherence[i]);
       const entSlopeEarly = slope(early, i=>logs.actEntropy[i] ?? 0);
       const M = norm01((cohSlopeEarly*100000) + (-entSlopeEarly*60000), -0.2, 1.4);
 
-      // Persistence: post-shift recovery slope
       const postCohSlope = slope(post, i=>logs.coherence[i]);
       const P = norm01(postCohSlope*100000, -0.6, 1.2);
 
-      // Adaptation latency: time from shift to sustained strategy change
       function dominantGesture(indices) {
         const counts = new Map();
         for (const i of indices) {
@@ -671,10 +701,13 @@
         }
         return best;
       }
+
       const domPre = dominantGesture(pre.slice(-Math.min(60, pre.length)));
+
       let adaptMs = 99999;
       for (let i=0;i<T;i++){
         if (logs.t[i] < shiftT) continue;
+
         const window = [];
         for (let j=i;j<T && logs.t[j] < logs.t[i] + 1100;j++) window.push(j);
         if (window.length < 8) continue;
@@ -690,13 +723,14 @@
       }
       const A = 1.0 - norm01(adaptMs, 900, 13000);
 
-      // Depth/play: post-recovery probing (coh high + entropy not collapsing to zero)
       const cohPost = mean(post, i=>logs.coherence[i]);
       const entPost = mean(post, i=>logs.actEntropy[i] ?? 0);
-      const D = norm01((cohPost*0.8 + entPost*0.55), 0.15, 1.1);
+      const filPost = mean(post, i=>logs.filStrength[i] ?? 0);
+      const D = norm01((cohPost*0.7 + entPost*0.45 + filPost*0.35), 0.12, 1.2);
 
       const vec = { E:+E.toFixed(3), M:+M.toFixed(3), P:+P.toFixed(3), A:+A.toFixed(3), D:+D.toFixed(3) };
       const mag = Math.sqrt(E*E+M*M+P*P+A*A+D*D);
+
       return {
         vec,
         mag:+mag.toFixed(3),
@@ -706,13 +740,14 @@
         stableHoldMs: Math.round(stableHoldMs),
         params: {
           alpha:+alpha.toFixed(3), beta:+beta.toFixed(3), gamma:+gamma.toFixed(3),
-          noise:+noise.toFixed(4), damping:+damping.toFixed(4)
+          noise:+noise.toFixed(4), damping:+damping.toFixed(4),
+          filThresh:+filThresh.toFixed(3), filGrowSpan:+filGrowSpan.toFixed(3)
         }
       };
     }
 
     // ============================================================
-    // 11) Main loop
+    // 12) Main loop
     // ============================================================
     let last = now();
     let lastLog = now();
@@ -730,7 +765,6 @@
       if (shifted) phaseLabel = "C";
       phEl.textContent = phaseLabel;
 
-      // HUD badge
       badgeEl.textContent = shifted ? "Adapt" : (t < 2500 ? "Explore" : (phaseLabel==="B" ? "Refine" : "Discover"));
 
       // Left modifiers
@@ -742,14 +776,14 @@
       const rx = handState.right.x, ry = handState.right.y;
       const rvx = handState.right.vx, rvy = handState.right.vy;
       const handSpeed = Math.sqrt(rvx*rvx + rvy*rvy);
+
       const intent = grammar(leftG, rightG, handSpeed);
 
-      // Phase B tightens and smooths
+      // Global alignment
       const phaseGamma = gamma * modCoupling * (phaseLabel==="B" ? 1.35 : 1.0) * (phaseLabel==="C" ? 1.10 : 1.0);
       const phaseNoise = noise * (phaseLabel==="B" ? 0.82 : 1.0) * (phaseLabel==="C" ? 0.94 : 1.0) + intent.noiseBoost;
       const axisLock = modAxisLock;
 
-      // Global alignment (plus intent boost)
       applyGlobalAlignment((phaseGamma + intent.alignBoost*0.10) * dt);
 
       // Per particle update
@@ -762,12 +796,10 @@
         let x = positions[ix], y = positions[ix+1], z = positions[ix+2];
         let vx = velocities[ix], vy = velocities[ix+1], vz = velocities[ix+2];
 
-        // noise
         vx += phaseNoise * randn() * dt;
         vy += phaseNoise * randn() * dt;
         vz += (phaseNoise*0.6) * randn() * dt;
 
-        // interaction
         if (handState.right.present) {
           const dx = rx - x;
           const dy = ry - y;
@@ -779,14 +811,12 @@
           const ny = dy / (d + 1e-6);
           const inv = 1.0 / (Math.pow(d + eps, k));
 
-          // radial (pinch)
           if (intent.radial > 0 && rightG==="PINCH") {
             const f = alpha * intent.radial * pinchSign * inv * rGate;
             vx += f * nx * dt;
             vy += f * ny * dt;
           }
 
-          // swirl (open)
           if (intent.swirl > 0 && rightG==="OPEN") {
             const [tx, ty] = rotate90(nx, ny);
             const f = beta * intent.swirl * swirlSign * inv * rGate;
@@ -794,13 +824,11 @@
             vy += f * ty * dt;
           }
 
-          // pulse (fist)
           if (intent.pulse > 0 && rightG==="FIST") {
             const f = 0.95 * intent.pulse * inv * rGate;
             vx += f * (-nx) * dt;
             vy += f * (-ny) * dt;
 
-            // L=OPEN makes pulse "clean" (damps noise locally)
             if (leftG === "OPEN") {
               vx *= 0.985;
               vy *= 0.985;
@@ -808,7 +836,6 @@
             }
           }
 
-          // beam (point)
           if (intent.beam > 0 && rightG==="POINT") {
             const hvx = clamp(rvx, -0.25, 0.25);
             const hvy = clamp(rvy, -0.25, 0.25);
@@ -818,12 +845,10 @@
           }
         }
 
-        // Axis lock pressure
         if (axisLock > 0) {
           vx += (-x) * 0.085 * axisLock * dt;
         }
 
-        // damping + integrate
         vx *= damping; vy *= damping; vz *= damping;
         x += vx; y += vy; z += vz;
 
@@ -836,33 +861,44 @@
 
       geom.attributes.position.needsUpdate = true;
 
-      // Coherence, visuals, filaments
+      // Coherence, filaments, colour shifts
       const coh = computeCoherence();
       cohEl.textContent = coh.toFixed(2);
-      updateColorsFromCoherence(coh);
 
-      // Filaments emerge smoothly above threshold; boosted by "cohere" context
+      // Filament strength: based on coherence + left/right “cohere” intent
       const boost = clamp(intent.filamentBoost * 0.20, 0, 0.25);
       const filStrength = clamp((coh - filThresh) / (filGrowSpan) + boost, 0, 1);
-      updateFilaments(coh, filStrength);
 
-      // Personalized shift trigger (stability-based)
+      updateFilaments(coh, filStrength);
+      updateColorsFromCoherenceAndFilaments(coh, filStrength);
+
+      // Personalized shift trigger
       maybeTriggerShift(t, coh, phaseLabel);
+
+      // Combo inventory logger (debounced)
+      const L = handState.left.present ? handState.left.gSmooth : "NONE";
+      const R = handState.right.present ? handState.right.gSmooth : "NONE";
+      recordComboEvent(t, phaseLabel, L, R, coh);
 
       // End
       if (t > END_AT_MS) {
         const ci = computeCI();
         badgeEl.textContent = "Done";
         if (ci) {
-          console.log("Curiosity Index (v2):", ci);
+          const comboCountsObj = Object.fromEntries([...comboCounts.entries()].sort((a,b)=>b[1]-a[1]));
+          console.log("Curiosity Index (v2.1):", ci);
+          console.log("Gesture Combo Counts (sorted):", comboCountsObj);
+          console.log("Gesture Combo Timeline (first 80):", comboTimeline.slice(0, 80));
+          console.log("Gesture Combo Timeline (full):", comboTimeline);
+
           document.getElementById("hint").innerHTML =
-            "Done. (CI + run parameters logged to console.)<br/>Refresh to try again (new run DNA each time).";
+            "Done. (CI + combo inventory logged to console.)<br/>Refresh to try again (new run DNA each time).";
         }
         damping = 0.992;
         noise = 0.004;
       }
 
-      // Logging at ~15Hz
+      // Log at ~15Hz
       const tNow = now();
       if (tNow - lastLog > 66) {
         lastLog = tNow;
@@ -879,9 +915,10 @@
 
         const H = (handState.right.present) ? updateEntropySample(handState.right.x, handState.right.y) : (logs.actEntropy.at(-1) ?? 0);
         logs.actEntropy.push(H);
+        logs.filStrength.push(filStrength);
       }
 
-      // Camera wobble for depth
+      // Camera wobble
       const wobble = 0.06;
       camera.position.x = Math.sin((t*0.00025)) * wobble;
       camera.position.y = Math.cos((t*0.00022)) * wobble * 0.6;
