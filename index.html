@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Curiosity Field (Gestures)</title>
+  <title>Curiosity Field (Gestures v2)</title>
   <style>
     html, body { margin:0; padding:0; overflow:hidden; background:#05060a; }
     #hud {
@@ -12,8 +12,7 @@
       letter-spacing: .2px; font-size: 13px;
       background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.12);
       border-radius: 14px; padding: 12px 14px; backdrop-filter: blur(10px);
-      user-select:none; pointer-events:none;
-      max-width: 360px;
+      user-select:none; pointer-events:none; max-width: 380px;
     }
     #hud b { color:#fff; }
     #badge {
@@ -53,6 +52,8 @@
     <div class="v" id="coh">0.00</div>
     <div class="k" style="margin-top:8px;">phase</div>
     <div class="v" id="ph">A</div>
+    <div class="k" style="margin-top:8px;">filaments</div>
+    <div class="v" id="fil">0</div>
   </div>
 
   <video id="video" playsinline></video>
@@ -64,68 +65,69 @@
   <script type="module">
     import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 
-    // =========================
+    // ============================================================
     // 0) Helpers
-    // =========================
+    // ============================================================
     const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-    const lerp = (a, b, t) => a + (b - a) * t;
-    const now = () => performance.now();
+    const lerp  = (a, b, t) => a + (b - a) * t;
+    const now   = () => performance.now();
+    const rotate90 = (vx, vy) => [-vy, vx];
 
-    function rotate90(vx, vy) { return [-vy, vx]; }
-
-    // Gesture utilities (landmarks are normalized [0..1])
-    function dist2(a, b) {
-      const dx = a.x - b.x, dy = a.y - b.y;
-      return dx*dx + dy*dy;
+    // Deterministic-ish per-run RNG (anti-memorization parameter jitter)
+    function xmur3(str) {
+      let h = 1779033703 ^ str.length;
+      for (let i = 0; i < str.length; i++) {
+        h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+        h = (h << 13) | (h >>> 19);
+      }
+      return function() {
+        h = Math.imul(h ^ (h >>> 16), 2246822507);
+        h = Math.imul(h ^ (h >>> 13), 3266489909);
+        h ^= h >>> 16;
+        return h >>> 0;
+      };
+    }
+    function sfc32(a, b, c, d) {
+      return function() {
+        a >>>= 0; b >>>= 0; c >>>= 0; d >>>= 0;
+        let t = (a + b) | 0;
+        a = b ^ (b >>> 9);
+        b = (c + (c << 3)) | 0;
+        c = (c << 21) | (c >>> 11);
+        d = (d + 1) | 0;
+        t = (t + d) | 0;
+        c = (c + t) | 0;
+        return (t >>> 0) / 4294967296;
+      };
     }
 
-    function fingerExtended(lm, tipIdx, pipIdx) {
-      // Rough heuristic: fingertip higher (smaller y) than PIP in image coordinates.
-      return lm[tipIdx].y < lm[pipIdx].y;
+    const runSalt = `${Date.now()}-${Math.random()}-${navigator.userAgent}`;
+    const seedGen = xmur3(runSalt);
+    const rand = sfc32(seedGen(), seedGen(), seedGen(), seedGen());
+    const randf = (a,b) => a + (b-a)*rand();
+
+    function randn() {
+      // Box-Muller
+      let u=0, v=0;
+      while(u===0) u=rand();
+      while(v===0) v=rand();
+      return Math.sqrt(-2.0*Math.log(u))*Math.cos(2.0*Math.PI*v);
     }
 
-    function classifyGesture(lm) {
-      // Landmarks indices (MediaPipe Hands):
-      // 4 thumb_tip, 8 index_tip, 12 middle_tip, 16 ring_tip, 20 pinky_tip
-      // PIP joints: 6, 10, 14, 18 (thumb uses different; we'll use pinch distance for thumb)
-      const idxExt = fingerExtended(lm, 8, 6);
-      const midExt = fingerExtended(lm, 12, 10);
-      const ringExt = fingerExtended(lm, 16, 14);
-      const pinkExt = fingerExtended(lm, 20, 18);
-
-      const pinch = dist2(lm[4], lm[8]) < 0.0022; // tuned threshold
-
-      // Point: index extended, others not
-      const point = idxExt && !(midExt || ringExt || pinkExt);
-
-      // Open palm: all (or most) extended
-      const open = idxExt && midExt && ringExt && pinkExt && !pinch;
-
-      // Fist: none extended (or very few), and not pinch
-      const fist = !(idxExt || midExt || ringExt || pinkExt) && !pinch;
-
-      if (pinch) return "PINCH";
-      if (open)  return "OPEN";
-      if (point) return "POINT";
-      if (fist)  return "FIST";
-      return "UNKNOWN";
-    }
-
-    // Smooth a scalar over time
     function smoothStep(prev, next, a=0.18) { return lerp(prev, next, a); }
 
-    // =========================
-    // 1) Three.js scene
-    // =========================
+    // ============================================================
+    // 1) Scene
+    // ============================================================
     const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog(0x05060a, 2, 8);
+    scene.fog = new THREE.Fog(0x05060a, 2, 9);
 
-    const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.01, 50);
+    const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.01, 60);
     camera.position.set(0, 0, 4.2);
 
     window.addEventListener("resize", () => {
@@ -134,42 +136,32 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    // Subtle background light
-    const light = new THREE.PointLight(0xffffff, 0.6, 50);
+    const light = new THREE.PointLight(0xffffff, 0.65, 80);
     light.position.set(2, 2, 4);
     scene.add(light);
 
-    // =========================
-    // 2) Particle Field
-    // =========================
-    const N = 1200; // complexity + novelty
+    // ============================================================
+    // 2) Particle Field (higher complexity)
+    // ============================================================
+    const N = 1600;
     const positions = new Float32Array(N * 3);
-    const colors = new Float32Array(N * 3);
-    const velocities = new Float32Array(N * 3);
-    const phase = new Float32Array(N); // hidden scalar [-1..1]
-
-    function randn() {
-      // Box-Muller
-      let u=0, v=0;
-      while(u===0) u=Math.random();
-      while(v===0) v=Math.random();
-      return Math.sqrt(-2.0*Math.log(u))*Math.cos(2.0*Math.PI*v);
-    }
+    const colors    = new Float32Array(N * 3);
+    const velocities= new Float32Array(N * 3);
+    const phase     = new Float32Array(N); // hidden scalar [-1..1]
 
     for (let i=0;i<N;i++){
-      const r = 1.25 * Math.sqrt(Math.random());
-      const a = Math.random()*Math.PI*2;
-      positions[3*i+0] = r*Math.cos(a) + 0.05*randn();
-      positions[3*i+1] = r*Math.sin(a) + 0.05*randn();
-      positions[3*i+2] = 0.25*randn();
+      const r = 1.35 * Math.sqrt(rand());
+      const a = rand()*Math.PI*2;
+      positions[3*i+0] = r*Math.cos(a) + 0.06*randn();
+      positions[3*i+1] = r*Math.sin(a) + 0.06*randn();
+      positions[3*i+2] = 0.30*randn();
 
       velocities[3*i+0] = 0.02*randn();
       velocities[3*i+1] = 0.02*randn();
       velocities[3*i+2] = 0.02*randn();
 
-      phase[i] = (Math.random()*2-1);
+      phase[i] = (rand()*2-1);
 
-      // init color (will be overwritten by coherence shading)
       colors[3*i+0] = 0.7;
       colors[3*i+1] = 0.8;
       colors[3*i+2] = 1.0;
@@ -180,7 +172,7 @@
     geom.setAttribute("color", new THREE.BufferAttribute(colors, 3));
 
     const mat = new THREE.PointsMaterial({
-      size: 0.018,
+      size: 0.017,
       vertexColors: true,
       transparent: true,
       opacity: 0.95,
@@ -191,70 +183,167 @@
     const points = new THREE.Points(geom, mat);
     scene.add(points);
 
-    // =========================
-    // 3) Puzzle phases & parameters
-    // =========================
+    // ============================================================
+    // 3) Emergent micro-objects: Filaments (LineSegments)
+    // ============================================================
+    const FIL_MAX = 700; // number of line segments
+    const filPos = new Float32Array(FIL_MAX * 2 * 3); // each segment has 2 endpoints
+    const filGeom = new THREE.BufferGeometry();
+    filGeom.setAttribute("position", new THREE.BufferAttribute(filPos, 3));
+    const filMat = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.0,
+      blending: THREE.AdditiveBlending
+    });
+    const filLines = new THREE.LineSegments(filGeom, filMat);
+    scene.add(filLines);
+
+    const filEl = document.getElementById("fil");
+
+    // Create filaments from local coherence: connect particles with similar velocity direction
+    function updateFilaments(coh, strength01) {
+      // strength01: 0..1 controls how many segments and opacity
+      const want = Math.floor(lerp(0, FIL_MAX, strength01));
+      filEl.textContent = String(want);
+
+      // Sample candidate pairs cheaply
+      // Heuristic: pick random particles, connect to a nearby particle index with similar phase and velocity direction
+      let w = 0;
+      for (let s=0; s<want; s++){
+        const i = Math.floor(rand()*N);
+        const j = (i + 1 + Math.floor(rand()*80)) % N;
+
+        const ix = 3*i, jx = 3*j;
+        const x1 = positions[ix],   y1 = positions[ix+1],   z1 = positions[ix+2];
+        const x2 = positions[jx],   y2 = positions[jx+1],   z2 = positions[jx+2];
+
+        // local gating
+        const dx = x2-x1, dy=y2-y1, dz=z2-z1;
+        const d2 = dx*dx+dy*dy+dz*dz;
+        if (d2 > 0.35) { s--; continue; } // too far: resample
+
+        // velocity alignment gating
+        const vix = velocities[ix], viy = velocities[ix+1], viz = velocities[ix+2];
+        const vjx = velocities[jx], vjy = velocities[jx+1], vjz = velocities[jx+2];
+        const mi = Math.sqrt(vix*vix+viy*viy+viz*viz) + 1e-6;
+        const mj = Math.sqrt(vjx*vjx+vjy*vjy+vjz*vjz) + 1e-6;
+        const dot = (vix*vjx+viy*vjy+viz*vjz)/(mi*mj);
+
+        if (dot < lerp(0.35, 0.75, coh)) { s--; continue; }
+
+        filPos[w++] = x1; filPos[w++] = y1; filPos[w++] = z1;
+        filPos[w++] = x2; filPos[w++] = y2; filPos[w++] = z2;
+      }
+
+      // Clear remainder
+      for (; w < filPos.length; w++) filPos[w] = 0;
+
+      filGeom.attributes.position.needsUpdate = true;
+      filMat.opacity = 0.02 + 0.28 * strength01;
+    }
+
+    // ============================================================
+    // 4) Puzzle phases, personalized shift, parameter jitter
+    // ============================================================
     const t0 = now();
-    const SHIFT_AT_MS = 60000; // 60s
-    const END_AT_MS = 90000;   // 90s
+    const END_AT_MS = 95000;
 
-    // base physics parameters
-    let alpha = 1.35;     // radial strength
-    let beta  = 0.95;     // swirl strength
-    let gamma = 0.22;     // neighbor-like alignment strength (approx)
-    let noise = 0.018;    // brownian
-    let damping = 0.985;
+    // Jittered physics parameters (per-run “DNA”)
+    let alpha   = randf(1.00, 1.65);   // radial strength
+    let beta    = randf(0.70, 1.20);   // swirl strength
+    let gamma   = randf(0.16, 0.30);   // alignment strength
+    let noise   = randf(0.012, 0.022); // brownian
+    let damping = randf(0.982, 0.989);
 
-    // "regime" variable: pinch attract vs repel
-    let pinchSign = +1; // flips at shift
-    let swirlSign = +1; // constant in v1
+    // Filament emergence threshold jitter
+    const filThresh = randf(0.44, 0.56);
+    const filGrowSpan = randf(0.10, 0.18);
+
+    // Personalized shift trigger jitter
+    const stableCohThresh = randf(0.46, 0.58);
+    const stableHoldMs = randf(2400, 4200); // must be stable for this long
+    const shiftLatestMs = randf(65000, 78000); // hard cap fallback
+
+    // Choose shift type (anti-memorization)
+    // shiftType: "PINCH_SIGN" or "SWIRL_SIGN" or "COUPLING_DROP"
+    const shiftTypeRoll = rand();
+    const shiftType = shiftTypeRoll < 0.45 ? "PINCH_SIGN" : (shiftTypeRoll < 0.85 ? "SWIRL_SIGN" : "COUPLING_DROP");
+
+    let pinchSign = +1;
+    let swirlSign = +1;
 
     // Left-hand modifiers (context)
     let modCoupling = 1.0;
     let modRadius   = 1.0;
     let modAxisLock = 0.0;
 
-    // =========================
-    // 4) Hand tracking (MediaPipe)
-    // =========================
+    // Personalized shift tracking
+    let shifted = false;
+    let stableSince = null;
+
+    // ============================================================
+    // 5) Hand tracking (MediaPipe)
+    // ============================================================
     const videoEl = document.getElementById("video");
     const badgeEl = document.getElementById("badge");
-    const cohEl = document.getElementById("coh");
-    const phEl = document.getElementById("ph");
+    const cohEl   = document.getElementById("coh");
+    const phEl    = document.getElementById("ph");
 
-    // Hand state (smoothed)
+    function dist2(a, b) {
+      const dx = a.x - b.x, dy = a.y - b.y;
+      return dx*dx + dy*dy;
+    }
+
+    function fingerExtended(lm, tipIdx, pipIdx) {
+      return lm[tipIdx].y < lm[pipIdx].y;
+    }
+
+    function classifyGesture(lm) {
+      const idxExt  = fingerExtended(lm, 8, 6);
+      const midExt  = fingerExtended(lm, 12, 10);
+      const ringExt = fingerExtended(lm, 16, 14);
+      const pinkExt = fingerExtended(lm, 20, 18);
+
+      const pinch = dist2(lm[4], lm[8]) < 0.0022;
+
+      const point = idxExt && !(midExt || ringExt || pinkExt);
+      const open  = idxExt && midExt && ringExt && pinkExt && !pinch;
+      const fist  = !(idxExt || midExt || ringExt || pinkExt) && !pinch;
+
+      if (pinch) return "PINCH";
+      if (open)  return "OPEN";
+      if (point) return "POINT";
+      if (fist)  return "FIST";
+      return "UNKNOWN";
+    }
+
     const handState = {
       right: { present:false, x:0, y:0, vx:0, vy:0, gesture:"UNKNOWN", gSmooth:"UNKNOWN" },
       left:  { present:false, x:0, y:0, vx:0, vy:0, gesture:"UNKNOWN", gSmooth:"UNKNOWN" },
     };
 
-    function updateHand(which, lm, handednessLabel) {
-      // Use landmark 9 (middle MCP) as stable palm center-ish
+    function updateHand(which, lm) {
       const cx = lm[9].x;
       const cy = lm[9].y;
 
-      // Convert normalized image coords -> world-ish coords
-      const wx = (cx - 0.5) * 3.2;
-      const wy = -(cy - 0.5) * 2.0;
+      const wx = (cx - 0.5) * 3.3;
+      const wy = -(cy - 0.5) * 2.1;
 
       const hs = handState[which];
       hs.present = true;
       hs.vx = smoothStep(hs.vx, (wx - hs.x), 0.25);
       hs.vy = smoothStep(hs.vy, (wy - hs.y), 0.25);
-      hs.x = smoothStep(hs.x, wx, 0.22);
-      hs.y = smoothStep(hs.y, wy, 0.22);
+      hs.x  = smoothStep(hs.x, wx, 0.22);
+      hs.y  = smoothStep(hs.y, wy, 0.22);
 
       const g = classifyGesture(lm);
       hs.gesture = g;
 
-      // gesture smoothing: require stability for a few frames
-      if (hs._lastG === g) {
-        hs._gCount = (hs._gCount || 0) + 1;
-      } else {
-        hs._lastG = g;
-        hs._gCount = 0;
-      }
-      hs.gSmooth = (hs._gCount > 3) ? g : hs.gSmooth; // simple debounce
+      if (hs._lastG === g) hs._gCount = (hs._gCount || 0) + 1;
+      else { hs._lastG = g; hs._gCount = 0; }
+
+      hs.gSmooth = (hs._gCount > 3) ? g : hs.gSmooth;
     }
 
     function clearHands() {
@@ -262,10 +351,7 @@
       handState.left.present  = false;
     }
 
-    const hands = new Hands({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
-    });
-
+    const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}` });
     hands.setOptions({
       maxNumHands: 2,
       modelComplexity: 1,
@@ -279,10 +365,9 @@
 
       for (let i=0;i<results.multiHandLandmarks.length;i++){
         const lm = results.multiHandLandmarks[i];
-        const handed = results.multiHandedness[i].label; // "Left"/"Right" from camera perspective
-        // For user experience, we treat label as the user's actual hand; it’s usually correct.
-        if (handed === "Right") updateHand("right", lm, handed);
-        if (handed === "Left")  updateHand("left",  lm, handed);
+        const handed = results.multiHandedness[i].label; // "Left"/"Right"
+        if (handed === "Right") updateHand("right", lm);
+        if (handed === "Left")  updateHand("left",  lm);
       }
     });
 
@@ -306,11 +391,10 @@
       console.error(err);
     });
 
-    // =========================
-    // 5) Logging for CI
-    // =========================
+    // ============================================================
+    // 6) Logging for CI (plus anti-fake instrumentation)
+    // ============================================================
     const logs = {
-      // sampled at ~15Hz
       t: [],
       coherence: [],
       speed: [],
@@ -321,42 +405,79 @@
       leftX: [],
       leftY: [],
       phase: [],
+      // derived: action entropy proxy (binning hand position)
+      actEntropy: []
     };
 
-    // Gesture → physics for right hand
-    function rightForces(g, x, y, vx, vy, timeMs) {
-      // returns {radial, swirl, pulse, beam}
-      // intensity shaped by speed of movement a bit
-      const sp = Math.sqrt(vx*vx + vy*vy);
-      const intensity = clamp(0.6 + sp*2.0, 0.6, 1.8);
-
-      // base
-      let radial = 0, swirl = 0, pulse = 0, beam = 0;
-
-      if (g === "PINCH") radial = 1.0 * intensity; // attract/repel (sign may flip)
-      else if (g === "OPEN") swirl = 1.0 * intensity;
-      else if (g === "FIST") pulse = 1.0 * intensity;
-      else if (g === "POINT") beam = 1.0 * intensity;
-
-      return { radial, swirl, pulse, beam };
-    }
-
-    // Left hand modifies context
+    // ============================================================
+    // 7) Gesture grammar combos -> physics intent
+    // ============================================================
     function applyLeftModifiers(g) {
       // defaults
       modCoupling = 1.0;
-      modRadius = 1.0;
+      modRadius   = 1.0;
       modAxisLock = 0.0;
 
-      if (g === "OPEN") modCoupling = 1.6;       // easier coherence
-      else if (g === "FIST") modCoupling = 0.7;  // harder
-      else if (g === "PINCH") modRadius = 0.65;  // precision
-      else if (g === "POINT") modAxisLock = 1.0; // symmetry pressure
+      if (g === "OPEN") { modCoupling = 1.65; }
+      else if (g === "FIST") { modCoupling = 0.72; }
+      else if (g === "PINCH") { modRadius = 0.65; }
+      else if (g === "POINT") { modAxisLock = 1.0; }
     }
 
-    // =========================
-    // 6) Physics update
-    // =========================
+    // Output intensities for each force channel based on (L, R)
+    function grammar(L, R, handSpeed) {
+      const sp = clamp(handSpeed, 0.0, 0.22);
+      const base = clamp(0.65 + sp*3.0, 0.55, 1.9);
+
+      // channels
+      let radial = 0, swirl = 0, pulse = 0, beam = 0;
+      let alignBoost = 0;     // extra alignment coupling
+      let noiseBoost = 0;     // extra turbulence
+      let filamentBoost = 0;  // promotes filaments
+
+      if (R === "PINCH") radial = 1.0 * base;
+      else if (R === "OPEN") swirl = 1.0 * base;
+      else if (R === "FIST") pulse = 1.0 * base;
+      else if (R === "POINT") beam = 1.0 * base;
+
+      // Modifiers by left hand context
+      if (L === "OPEN") {
+        // cohere
+        radial *= 1.15;
+        swirl  *= 1.18;
+        pulse  *= 0.85; // cleaner pulse
+        beam   *= 1.10;
+        alignBoost = 0.10 * base;
+        filamentBoost = 0.20 * base;
+      } else if (L === "FIST") {
+        // disrupt
+        radial *= 0.85;
+        swirl  *= 1.15;
+        pulse  *= 1.25;
+        beam   *= 1.05;
+        noiseBoost = 0.012 * base;
+      } else if (L === "PINCH") {
+        // precision
+        radial *= 1.25;
+        swirl  *= 1.10;
+        pulse  *= 0.95;
+        beam   *= 1.20;
+        // radius is handled separately via modRadius
+      } else if (L === "POINT") {
+        // symmetry constraint
+        radial *= 1.10;
+        swirl  *= 1.08;
+        pulse  *= 0.90;
+        beam   *= 1.15;
+        alignBoost = 0.06 * base;
+      }
+
+      return { radial, swirl, pulse, beam, alignBoost, noiseBoost, filamentBoost };
+    }
+
+    // ============================================================
+    // 8) Physics / visuals
+    // ============================================================
     function computeCoherence() {
       let mx=0, my=0, mz=0;
       for (let i=0;i<N;i++){
@@ -377,7 +498,6 @@
       return s/N;
     }
 
-    // Approx neighbor alignment (cheap): align to global mean velocity direction (works surprisingly well visually)
     function applyGlobalAlignment(gain) {
       let mvx=0,mvy=0,mvz=0;
       for (let i=0;i<N;i++){
@@ -395,15 +515,12 @@
     }
 
     function updateColorsFromCoherence(coh) {
-      // Map coherence to a “cleaner” palette without being an obvious score bar.
-      // low coh: cooler/dimmer; high coh: brighter/whiter
-      const brightness = clamp(0.35 + coh*0.85, 0.25, 1.0);
+      const brightness = clamp(0.30 + coh*0.90, 0.22, 1.0);
       for (let i=0;i<N;i++){
-        const p = (phase[i] * 0.5 + 0.5); // 0..1
-        // base tint slightly varies by phase scalar so it feels alive
-        const r = lerp(0.20, 0.95, brightness) * lerp(0.6, 1.0, p);
-        const g = lerp(0.35, 0.98, brightness) * lerp(0.7, 1.0, 1.0-p*0.35);
-        const b = lerp(0.70, 1.00, brightness);
+        const p = (phase[i] * 0.5 + 0.5);
+        const r = lerp(0.18, 0.97, brightness) * lerp(0.62, 1.0, p);
+        const g = lerp(0.30, 0.99, brightness) * lerp(0.74, 1.0, 1.0-p*0.35);
+        const b = lerp(0.72, 1.00, brightness);
         colors[3*i+0] = r;
         colors[3*i+1] = g;
         colors[3*i+2] = b;
@@ -412,38 +529,105 @@
     }
 
     function enforceBounds(i) {
-      // soft spherical bounds
       const x = positions[3*i+0], y = positions[3*i+1], z = positions[3*i+2];
       const r = Math.sqrt(x*x + y*y + z*z);
-      const R = 1.9;
+      const R = 2.05;
       if (r > R) {
-        const k = (r - R) * 0.015;
+        const k = (r - R) * 0.016;
         velocities[3*i+0] -= k * (x/r);
         velocities[3*i+1] -= k * (y/r);
         velocities[3*i+2] -= k * (z/r);
       }
     }
 
-    // =========================
-    // 7) CI computation (v1)
-    // =========================
+    // Action entropy proxy: bin right-hand positions into 8x8 grid
+    const BIN = 8;
+    const binCounts = new Array(BIN*BIN).fill(0);
+    function updateEntropySample(rx, ry) {
+      // map world coords roughly to [-1.6..1.6] x [-1.05..1.05]
+      const nx = clamp((rx/3.3 + 0.5), 0, 0.999);
+      const ny = clamp((-ry/2.1 + 0.5), 0, 0.999);
+      const bx = Math.floor(nx * BIN);
+      const by = Math.floor(ny * BIN);
+      binCounts[by*BIN + bx]++;
+
+      let total = 0;
+      for (const c of binCounts) total += c;
+
+      let H = 0;
+      for (const c of binCounts) {
+        if (!c) continue;
+        const p = c / total;
+        H += -p * Math.log(p);
+      }
+      // normalize by log(K)
+      return H / Math.log(BIN*BIN);
+    }
+
+    // ============================================================
+    // 9) Personalized shift logic
+    // ============================================================
+    function maybeTriggerShift(t, coh, phaseLabel) {
+      if (shifted) return;
+
+      // Only allow shift once user has time to explore
+      if (t < 18000) return;
+
+      // Consider "stable" when coherence above threshold
+      // and right-hand presence is on (active exploration)
+      const active = handState.right.present;
+
+      if (active && coh >= stableCohThresh && phaseLabel !== "C") {
+        if (stableSince === null) stableSince = t;
+        const held = t - stableSince;
+        if (held >= stableHoldMs) {
+          shifted = true;
+          applyShift();
+          return;
+        }
+      } else {
+        stableSince = null;
+      }
+
+      // Fallback hard cap
+      if (t >= shiftLatestMs) {
+        shifted = true;
+        applyShift();
+      }
+    }
+
+    function applyShift() {
+      // Silent regime change — choose by shiftType
+      if (shiftType === "PINCH_SIGN") pinchSign *= -1;
+      else if (shiftType === "SWIRL_SIGN") swirlSign *= -1;
+      else if (shiftType === "COUPLING_DROP") gamma *= 0.65;
+
+      // Also micro-jitter noise slightly to mask shift footprint while preserving detectability
+      noise *= randf(0.92, 1.12);
+    }
+
+    // ============================================================
+    // 10) CI computation (unchanged skeleton, but includes entropy)
+    // ============================================================
     function computeCI() {
-      // Normalize helper
       const norm01 = (x, a, b) => clamp((x - a) / (b - a + 1e-9), 0, 1);
-
       const T = logs.t.length;
-      if (T < 10) return null;
+      if (T < 12) return null;
 
-      // Split windows around shift
-      const shiftT = SHIFT_AT_MS;
-      let pre = [], post = [];
+      // approximate shift moment from logs.phase transitions (A/B -> C)
+      let shiftT = null;
+      for (let i=0;i<T;i++){
+        if (logs.phase[i] === "C") { shiftT = logs.t[i]; break; }
+      }
+      if (shiftT === null) shiftT = logs.t[Math.floor(T*0.65)];
+
+      const pre = [], post = [];
       for (let i=0;i<T;i++){
         if (logs.t[i] < shiftT) pre.push(i);
         else post.push(i);
       }
       const mean = (arr, f) => arr.reduce((s,i)=>s+f(i),0)/(arr.length||1);
       const slope = (arr, f) => {
-        // simple linear regression slope vs time
         const n = arr.length||1;
         const mt = mean(arr, i=>logs.t[i]);
         const my = mean(arr, i=>f(i));
@@ -456,31 +640,29 @@
         return num/(den+1e-9);
       };
 
-      const cohMeanPre = mean(pre, i=>logs.coherence[i]);
-      const cohMeanPost = mean(post, i=>logs.coherence[i]);
+      // Gesture diversity (exploration)
+      const uniq = (arr) => new Set(arr).size;
+      const rightGuniq = uniq(logs.rightGesture.filter(g=>g!=="UNKNOWN" && g!=="NONE"));
+      const leftGuniq  = uniq(logs.leftGesture.filter(g=>g!=="UNKNOWN" && g!=="NONE"));
+      const entEarly = mean(pre.filter(i=>logs.t[i]<25000), i=>logs.actEntropy[i] ?? 0);
+      const E = norm01((rightGuniq + 0.7*leftGuniq + 1.2*entEarly), 1.0, 5.5);
 
-      // Exploration proxy: gesture diversity + movement coverage
-      const uniqGest = (arr) => new Set(arr).size;
-      const rightGuniq = uniqGest(logs.rightGesture.filter(g=>g!=="UNKNOWN"));
-      const leftGuniq  = uniqGest(logs.leftGesture.filter(g=>g!=="UNKNOWN"));
-      const E = norm01((rightGuniq + 0.7*leftGuniq), 1.0, 6.0);
-
-      // Model formation proxy: coherence slope in early phase (should rise)
+      // Model formation: coherence slope early + entropy drop
       const early = pre.filter(i => logs.t[i] < 35000);
-      const cohSlopeEarly = slope(early, i=>logs.coherence[i]); // per ms
-      const M = norm01(cohSlopeEarly * 100000, -0.2, 1.2); // scale
+      const cohSlopeEarly = slope(early, i=>logs.coherence[i]);
+      const entSlopeEarly = slope(early, i=>logs.actEntropy[i] ?? 0);
+      const M = norm01((cohSlopeEarly*100000) + (-entSlopeEarly*60000), -0.2, 1.4);
 
-      // Persistence proxy: interaction presence after dips post-shift
+      // Persistence: post-shift recovery slope
       const postCohSlope = slope(post, i=>logs.coherence[i]);
-      const P = norm01(postCohSlope * 100000, -0.5, 1.1);
+      const P = norm01(postCohSlope*100000, -0.6, 1.2);
 
-      // Adaptation latency: time from shift to first sustained strategy change
-      // Heuristic: when right gesture differs from pre-shift dominant gesture for >= 1s
+      // Adaptation latency: time from shift to sustained strategy change
       function dominantGesture(indices) {
         const counts = new Map();
         for (const i of indices) {
           const g = logs.rightGesture[i];
-          if (g==="UNKNOWN") continue;
+          if (g==="UNKNOWN" || g==="NONE") continue;
           counts.set(g, (counts.get(g)||0)+1);
         }
         let best="UNKNOWN", bestC=0;
@@ -489,42 +671,51 @@
         }
         return best;
       }
-      const domPre = dominantGesture(pre.slice(-Math.min(60, pre.length))); // last ~4s
+      const domPre = dominantGesture(pre.slice(-Math.min(60, pre.length)));
       let adaptMs = 99999;
       for (let i=0;i<T;i++){
         if (logs.t[i] < shiftT) continue;
         const window = [];
-        for (let j=i;j<T && logs.t[j] < logs.t[i] + 1000;j++) window.push(j);
+        for (let j=i;j<T && logs.t[j] < logs.t[i] + 1100;j++) window.push(j);
         if (window.length < 8) continue;
-        // if most gestures in window are not domPre, mark as change
+
         let diff=0, total=0;
         for (const j of window){
           const g = logs.rightGesture[j];
-          if (g==="UNKNOWN") continue;
+          if (g==="UNKNOWN" || g==="NONE") continue;
           total++;
           if (g !== domPre) diff++;
         }
         if (total >= 6 && diff/total >= 0.75) { adaptMs = logs.t[i]-shiftT; break; }
       }
-      const A = 1.0 - norm01(adaptMs, 800, 12000); // faster = higher
+      const A = 1.0 - norm01(adaptMs, 900, 13000);
 
-      // Depth/play: after coherence recovers, do they explore with control?
-      // proxy: if post coherence rises AND gesture diversity remains >1
-      const postGuniq = uniqGest(logs.rightGesture.filter((g,idx)=>logs.t[idx]>shiftT+8000 && g!=="UNKNOWN"));
-      const D = norm01((cohMeanPost*0.8 + postGuniq*0.12), 0.15, 1.05);
+      // Depth/play: post-recovery probing (coh high + entropy not collapsing to zero)
+      const cohPost = mean(post, i=>logs.coherence[i]);
+      const entPost = mean(post, i=>logs.actEntropy[i] ?? 0);
+      const D = norm01((cohPost*0.8 + entPost*0.55), 0.15, 1.1);
 
-      // Vector + scalar summary
       const vec = { E:+E.toFixed(3), M:+M.toFixed(3), P:+P.toFixed(3), A:+A.toFixed(3), D:+D.toFixed(3) };
       const mag = Math.sqrt(E*E+M*M+P*P+A*A+D*D);
-      return { vec, mag:+mag.toFixed(3), domPre, adaptMs: Math.round(adaptMs) };
+      return {
+        vec,
+        mag:+mag.toFixed(3),
+        shiftT: Math.round(shiftT),
+        shiftType,
+        stableCohThresh:+stableCohThresh.toFixed(2),
+        stableHoldMs: Math.round(stableHoldMs),
+        params: {
+          alpha:+alpha.toFixed(3), beta:+beta.toFixed(3), gamma:+gamma.toFixed(3),
+          noise:+noise.toFixed(4), damping:+damping.toFixed(4)
+        }
+      };
     }
 
-    // =========================
-    // 8) Animation loop
-    // =========================
+    // ============================================================
+    // 11) Main loop
+    // ============================================================
     let last = now();
     let lastLog = now();
-    let shifted = false;
 
     function animate() {
       requestAnimationFrame(animate);
@@ -533,35 +724,14 @@
       const dt = Math.min(0.033, (now() - last)/1000);
       last = now();
 
-      // Phase selection for display
+      // Phase label
       let phaseLabel = "A";
-      if (t > 35000 && t <= SHIFT_AT_MS) phaseLabel = "B";
-      if (t > SHIFT_AT_MS) phaseLabel = "C";
+      if (t > 32000 && !shifted) phaseLabel = "B";
+      if (shifted) phaseLabel = "C";
       phEl.textContent = phaseLabel;
 
-      // silent shift
-      if (!shifted && t >= SHIFT_AT_MS) {
-        shifted = true;
-        pinchSign *= -1; // THE PHASE SHIFT: pinch flips attract<->repel
-        badgeEl.textContent = "Explore";
-      }
-
-      // end
-      if (t > END_AT_MS) {
-        const ci = computeCI();
-        badgeEl.textContent = "Done";
-        if (ci) {
-          console.log("Curiosity Index (v1):", ci);
-          document.getElementById("hint").innerHTML =
-            "Done. (CI logged to console.)<br/>You can now refresh to try again.";
-        }
-        // freeze gently
-        damping = 0.992;
-        noise = 0.004;
-      } else {
-        // subtle badge updates
-        badgeEl.textContent = (t < 2500) ? "Explore" : (shifted ? "Adapt" : "Discover");
-      }
+      // HUD badge
+      badgeEl.textContent = shifted ? "Adapt" : (t < 2500 ? "Explore" : (phaseLabel==="B" ? "Refine" : "Discover"));
 
       // Left modifiers
       const leftG = handState.left.present ? handState.left.gSmooth : "UNKNOWN";
@@ -571,113 +741,128 @@
       const rightG = handState.right.present ? handState.right.gSmooth : "UNKNOWN";
       const rx = handState.right.x, ry = handState.right.y;
       const rvx = handState.right.vx, rvy = handState.right.vy;
-      const forces = handState.right.present ? rightForces(rightG, rx, ry, rvx, rvy, t) : {radial:0,swirl:0,pulse:0,beam:0};
+      const handSpeed = Math.sqrt(rvx*rvx + rvy*rvy);
+      const intent = grammar(leftG, rightG, handSpeed);
 
-      // Phase B tightens coherence (increases gamma, reduces noise)
-      const phaseGamma = gamma * modCoupling * (phaseLabel==="B" ? 1.35 : 1.0) * (phaseLabel==="C" ? 1.1 : 1.0);
-      const phaseNoise = noise * (phaseLabel==="B" ? 0.85 : 1.0) * (phaseLabel==="C" ? 0.95 : 1.0);
-
-      // If left hand points, add axis-lock pressure (symmetry constraint)
+      // Phase B tightens and smooths
+      const phaseGamma = gamma * modCoupling * (phaseLabel==="B" ? 1.35 : 1.0) * (phaseLabel==="C" ? 1.10 : 1.0);
+      const phaseNoise = noise * (phaseLabel==="B" ? 0.82 : 1.0) * (phaseLabel==="C" ? 0.94 : 1.0) + intent.noiseBoost;
       const axisLock = modAxisLock;
 
-      // Apply global alignment (cheap neighbor coupling approximation)
-      applyGlobalAlignment(phaseGamma * dt);
+      // Global alignment (plus intent boost)
+      applyGlobalAlignment((phaseGamma + intent.alignBoost*0.10) * dt);
 
-      // Per-particle physics
-      const R0 = 0.55 * modRadius; // interaction radius scale
-      const k = 1.35; // falloff
+      // Per particle update
+      const R0 = 0.55 * modRadius;
+      const k = 1.35;
       const eps = 0.03;
 
       for (let i=0;i<N;i++){
-        const ix = 3*i+0, iy = 3*i+1, iz = 3*i+2;
+        const ix = 3*i;
+        let x = positions[ix], y = positions[ix+1], z = positions[ix+2];
+        let vx = velocities[ix], vy = velocities[ix+1], vz = velocities[ix+2];
 
-        let x = positions[ix], y = positions[iy], z = positions[iz];
-        let vx = velocities[ix], vy = velocities[iy], vz = velocities[iz];
-
-        // Brownian noise (controlled)
+        // noise
         vx += phaseNoise * randn() * dt;
         vy += phaseNoise * randn() * dt;
         vz += (phaseNoise*0.6) * randn() * dt;
 
-        // Right-hand interaction
+        // interaction
         if (handState.right.present) {
           const dx = rx - x;
           const dy = ry - y;
           const d2 = dx*dx + dy*dy;
-          const d = Math.sqrt(d2) + 1e-6;
-
-          // Only act within soft radius
+          const d  = Math.sqrt(d2) + 1e-6;
           const rGate = Math.exp(-d2 / (R0*R0 + 1e-6));
 
           const nx = dx / (d + 1e-6);
           const ny = dy / (d + 1e-6);
           const inv = 1.0 / (Math.pow(d + eps, k));
 
-          // Radial (pinch)
-          if (forces.radial > 0) {
-            const sgn = pinchSign;
-            const f = alpha * forces.radial * sgn * inv * rGate;
+          // radial (pinch)
+          if (intent.radial > 0 && rightG==="PINCH") {
+            const f = alpha * intent.radial * pinchSign * inv * rGate;
             vx += f * nx * dt;
             vy += f * ny * dt;
           }
 
-          // Swirl (open palm)
-          if (forces.swirl > 0) {
+          // swirl (open)
+          if (intent.swirl > 0 && rightG==="OPEN") {
             const [tx, ty] = rotate90(nx, ny);
-            const f = beta * forces.swirl * swirlSign * inv * rGate;
+            const f = beta * intent.swirl * swirlSign * inv * rGate;
             vx += f * tx * dt;
             vy += f * ty * dt;
           }
 
-          // Pulse (fist): radial impulse that tends to “reset” or disrupt
-          if (forces.pulse > 0) {
-            const f = 0.8 * forces.pulse * inv * rGate;
+          // pulse (fist)
+          if (intent.pulse > 0 && rightG==="FIST") {
+            const f = 0.95 * intent.pulse * inv * rGate;
             vx += f * (-nx) * dt;
             vy += f * (-ny) * dt;
+
+            // L=OPEN makes pulse "clean" (damps noise locally)
+            if (leftG === "OPEN") {
+              vx *= 0.985;
+              vy *= 0.985;
+              vz *= 0.985;
+            }
           }
 
-          // Beam (point): shear/align along motion direction of the hand
-          if (forces.beam > 0) {
-            const hvx = clamp(rvx, -0.2, 0.2);
-            const hvy = clamp(rvy, -0.2, 0.2);
-            const f = 1.1 * forces.beam * inv * rGate;
+          // beam (point)
+          if (intent.beam > 0 && rightG==="POINT") {
+            const hvx = clamp(rvx, -0.25, 0.25);
+            const hvy = clamp(rvy, -0.25, 0.25);
+            const f = 1.15 * intent.beam * inv * rGate;
             vx += f * hvx * dt;
             vy += f * hvy * dt;
           }
         }
 
-        // Axis lock (left point): encourage symmetry about y-axis
+        // Axis lock pressure
         if (axisLock > 0) {
-          vx += (-x) * 0.08 * axisLock * dt;
+          vx += (-x) * 0.085 * axisLock * dt;
         }
 
-        // Damping
-        vx *= damping;
-        vy *= damping;
-        vz *= damping;
+        // damping + integrate
+        vx *= damping; vy *= damping; vz *= damping;
+        x += vx; y += vy; z += vz;
 
-        // Integrate
-        x += vx;
-        y += vy;
-        z += vz;
-
-        positions[ix] = x; positions[iy] = y; positions[iz] = z;
-        velocities[ix] = vx; velocities[iy] = vy; velocities[iz] = vz;
+        positions[ix]   = x; positions[ix+1] = y; positions[ix+2] = z;
+        velocities[ix]  = vx; velocities[ix+1] = vy; velocities[ix+2] = vz;
 
         enforceBounds(i);
-
-        // Slowly drift hidden phase scalar (keeps visual alive)
-        phase[i] = clamp(phase[i] + 0.002*randn()*dt, -1, 1);
+        phase[i] = clamp(phase[i] + 0.0022*randn()*dt, -1, 1);
       }
 
       geom.attributes.position.needsUpdate = true;
 
-      // Coherence & visuals
+      // Coherence, visuals, filaments
       const coh = computeCoherence();
       cohEl.textContent = coh.toFixed(2);
       updateColorsFromCoherence(coh);
 
-      // Log at ~15Hz
+      // Filaments emerge smoothly above threshold; boosted by "cohere" context
+      const boost = clamp(intent.filamentBoost * 0.20, 0, 0.25);
+      const filStrength = clamp((coh - filThresh) / (filGrowSpan) + boost, 0, 1);
+      updateFilaments(coh, filStrength);
+
+      // Personalized shift trigger (stability-based)
+      maybeTriggerShift(t, coh, phaseLabel);
+
+      // End
+      if (t > END_AT_MS) {
+        const ci = computeCI();
+        badgeEl.textContent = "Done";
+        if (ci) {
+          console.log("Curiosity Index (v2):", ci);
+          document.getElementById("hint").innerHTML =
+            "Done. (CI + run parameters logged to console.)<br/>Refresh to try again (new run DNA each time).";
+        }
+        damping = 0.992;
+        noise = 0.004;
+      }
+
+      // Logging at ~15Hz
       const tNow = now();
       if (tNow - lastLog > 66) {
         lastLog = tNow;
@@ -690,10 +875,13 @@
         logs.rightY.push(handState.right.present ? handState.right.y : 0);
         logs.leftX.push(handState.left.present ? handState.left.x : 0);
         logs.leftY.push(handState.left.present ? handState.left.y : 0);
-        logs.phase.push(phaseLabel);
+        logs.phase.push(shifted ? "C" : (t > 32000 ? "B" : "A"));
+
+        const H = (handState.right.present) ? updateEntropySample(handState.right.x, handState.right.y) : (logs.actEntropy.at(-1) ?? 0);
+        logs.actEntropy.push(H);
       }
 
-      // Camera orbit micro motion for depth
+      // Camera wobble for depth
       const wobble = 0.06;
       camera.position.x = Math.sin((t*0.00025)) * wobble;
       camera.position.y = Math.cos((t*0.00022)) * wobble * 0.6;
